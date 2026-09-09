@@ -17,11 +17,13 @@ categories = ["embedded", "no-std", "no-std::no-alloc", "os"]
 default = ["std"]
 # The feature ladder is the rusty_zstd one: `std` implies `alloc`; with neither,
 # the crate is pure `core` and still builds on Cortex-M and RISC-V bare metal.
-std = ["alloc", "rusty_rtos_core/std"]
-alloc = ["rusty_rtos_core/alloc"]
+std = ["alloc", "rusty_rtos_core/std", "rusty_rtos_kernel/std", "rusty_rtos_port/std"]
+alloc = ["rusty_rtos_core/alloc", "rusty_rtos_kernel/alloc", "rusty_rtos_port/alloc"]
 
 [dependencies]
 rusty_rtos_core = { workspace = true }
+rusty_rtos_kernel = { workspace = true }
+rusty_rtos_port = { workspace = true }
 
 [lints]
 workspace = true

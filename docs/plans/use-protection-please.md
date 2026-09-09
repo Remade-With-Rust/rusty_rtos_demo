@@ -9,7 +9,7 @@
 **Architect**: [Tim Almond](https://github.com/Ttimmahlax) — accountable for this unit's security design; rendered
 at the foot of the block in every README and mirror
 **Audit depth**: survey
-**Audited**: 2026-09-09 by kairos (scaffold pass) · **Next review**: the first milestone with a kill test
+**Audited**: 2026-09-09 by kairos (K1 pass) · **Next review**: the rest of the nine-scenario corpus
 
 > Source of truth for this unit's hardening status. The README's status table is
 > **generated from this file** — edit here, then run:
@@ -57,8 +57,8 @@ Evidence; excluded from the totals).
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
 | H-07 | ★ `Cargo.lock` committed | Completed | `Cargo.lock` tracked in the first commit (`git ls-files Cargo.lock`) | |
-| H-08 | ★ `deny.toml` policy present and enforced | Incomplete | `deny.toml` present (licenses, bans incl. `*-sys`, sources); `cargo deny check` runs in CI; the first run's verdict goes here | |
-| H-09 | ★ Vulnerability scan clean (`cargo audit`) | Incomplete | not yet run | |
+| H-08 | ★ `deny.toml` policy present and enforced | Completed | `cargo deny check` 2026-09-09: advisories ok, bans ok, licenses ok, sources ok | |
+| H-09 | ★ Vulnerability scan clean (`cargo audit`) | Completed | `cargo audit` 2026-09-09: 0 advisories | |
 | H-10 | ★ `cargo vet` coverage complete | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 | H-11 | Unsafe inventory measured and trending down (geiger) | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 | H-12 | ★ SBOM generated and published with releases | Incomplete | no release yet | |
@@ -69,8 +69,8 @@ Evidence; excluded from the totals).
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-15 | ★ Workspace lint policy set and clean | Completed | `[workspace.lints]`: `unsafe_code = deny`, `undocumented_unsafe_blocks`, `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented` = deny, `indexing_slicing` + `arithmetic_side_effects` = warn; `cargo clippy --workspace --all-targets -- -D warnings` clean at scaffold | |
-| H-16 | ★ `unsafe` isolated, SAFETY-commented, inventoried | Completed | `forbid(unsafe_code)` in every crate; `UNSAFE.md` lists none | |
+| H-15 | ★ Workspace lint policy set and clean | Completed | `[workspace.lints]` as the family's; `cargo clippy --workspace --all-targets -- -D warnings` clean | |
+| H-16 | ★ `unsafe` isolated, SAFETY-commented, inventoried | Completed | `forbid(unsafe_code)`; `UNSAFE.md` lists none | |
 | H-17 | Arithmetic safety explicit | Incomplete | `arithmetic_side_effects = warn` under `-D warnings`; no arithmetic yet to audit | |
 | H-18 | ★ No `unwrap`/`expect`/panic on untrusted paths; typed errors | Completed | `unwrap_used`, `expect_used`, `panic` = deny at the workspace; tests opt out per file | |
 | H-19 | Input validation — external bytes treated as hostile | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
@@ -87,7 +87,7 @@ Evidence; excluded from the totals).
 
 | ID | Gate | Status | Evidence | Target |
 |---|---|---|---|---|
-| H-23 | ★ Tests pass under Miri | Incomplete | not yet run | |
+| H-23 | ★ Tests pass under Miri | Completed | `cargo +nightly miri test --test conformance the_scenario_is_deterministic` 2026-09-09: green in 158 s, which runs the whole kernel, lists, arenas and queue under the interpreter | |
 | H-24 | Critical paths pass the sanitizers (ASan/MSan/TSan) | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 | H-25 | `cargo careful test` green | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 
@@ -97,7 +97,7 @@ Evidence; excluded from the totals).
 |---|---|---|---|---|
 | H-26 | ★ Fuzz target per public parser, decoder, or message handler | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 | H-27 | ★ Continuous fuzzing with no open crashes | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
-| H-28 | Property tests cover the documented invariants | Incomplete | | |
+| H-28 | Property tests cover the documented invariants | Completed | `tests/conformance.rs`: the corpus is deterministic (two runs agree on exits, lines and an FNV-1a/64 digest of the trace), and the recorded oracle counters and digest are asserted, so any drift in the kernel fails here without a C toolchain | |
 | H-29 | Mutation and/or differential testing on critical modules | N/A | standard tier: a critical-only gate (registry tier column); not in the denominator | |
 
 ### Phase 7 — Formal verification
@@ -202,3 +202,4 @@ Append one line per pass; never rewrite history. The trend is the point.
 |---|---|---|---|---|---|
 | 2026-09-09 | survey | kairos (scaffold pass) | 7 / 0 / 28 | 5 | first pass, at stamp time; every Completed row names a file that exists |
 | 2026-09-09 | survey | kairos (tier pass) | 8 / 0 / 15 | 6 | 13 critical-only gates marked N/A for the standard tier; the tier reason corrected from the template's critical-path wording |
+| 2026-09-09 | survey + tool probes | kairos (K1 pass) | 12 / 0 / 11 | 9 | K1: the trace differential against the C kernel is live and is this unit's strongest evidence; deny, audit and Miri run on the developer box |

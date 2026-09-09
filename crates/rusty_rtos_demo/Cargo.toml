@@ -18,6 +18,11 @@ default = ["std"]
 std = ["rusty_rtos_demo-core/std"]
 alloc = ["rusty_rtos_demo-core/alloc"]
 
+[[bin]]
+name = "kairos-sim"
+path = "src/main.rs"
+required-features = ["std"]
+
 [dependencies]
 rusty_rtos_demo-core = { workspace = true }
 
