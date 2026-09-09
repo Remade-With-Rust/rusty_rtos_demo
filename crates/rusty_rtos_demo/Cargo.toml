@@ -1,0 +1,25 @@
+[package]
+name = "rusty_rtos_demo"
+description = "The FreeRTOS standard demo tasks (Demo/Common/Minimal) remade in Rust as the Kairos conformance corpus: every scenario self-checks like the C original and, on the sim port, diffs its trace against the C kernel's."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "../../README.md"
+documentation = "https://docs.rs/rusty_rtos_demo"
+keywords = ["rtos", "freertos", "embedded", "no-std", "remade-with-rust"]
+categories = ["embedded", "no-std", "os"]
+
+[features]
+default = ["std"]
+std = ["rusty_rtos_demo-core/std"]
+alloc = ["rusty_rtos_demo-core/alloc"]
+
+[dependencies]
+rusty_rtos_demo-core = { workspace = true }
+
+[lints]
+workspace = true
