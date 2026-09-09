@@ -22,15 +22,31 @@
 //!
 //! # The corpus
 //!
-//! | scenario | C file | state |
+//! | scenario | C file | what it tortures |
 //! |---|---|---|
-//! | [`dynamic`] | `dynamic.c` | remade |
+//! | [`dynamic`] | `dynamic.c` | suspend, resume, priority set, suspend-all |
+//! | [`pollq`] | `PollQ.c` | a queue polled from both ends, never blocking |
+//! | [`blockq`] | `BlockQ.c` | blocking sends and receives, three task pairs |
+//! | [`semtest`] | `semtest.c` | two binary semaphores guarding a shared variable |
+//! | [`countsem`] | `countsem.c` | counting semaphores, driven to both ends |
+//! | [`recmutex`] | `recmutex.c` | a recursive mutex and its priority inheritance |
+//! | [`blocktim`] | `blocktim.c` | block times and `xTaskDelayUntil`, to the tick |
+//! | [`qpeek`] | `QPeek.c` | peeking, and the order four priorities wake in |
+//! | [`genqtest`] | `GenQTest.c` | both queue ends, and priority inheritance |
 //!
 //! The other eight scenarios of the K1 corpus follow the same shape and
 //! land as they are written; the plan's kill test is the whole nine.
 
+pub mod blockq;
+pub mod blocktim;
+pub mod countsem;
 pub mod dynamic;
+pub mod genqtest;
+pub mod pollq;
+pub mod qpeek;
+pub mod recmutex;
 pub mod runner;
+pub mod semtest;
 pub mod trace;
 
 pub use runner::{Body, Runner, Shared, SimKernel, Step, Verdict};
@@ -45,7 +61,21 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The first C oracle run taught us to want one — an unbounded scenario
 /// wrote an 8 GB trace before anybody noticed — so the Rust side refuses
 /// to be the second lesson.
-pub const DEFAULT_STEP_LIMIT: u64 = 50_000_000;
+///
+/// It has to scale with the run, because a step is a C statement and some
+/// scenarios spend thousands of them per tick without making a kernel call
+/// at all: `semtest`'s guarded loop counts to 0xfff between one semaphore
+/// take and the next, which is about four thousand steps a tick. A fixed
+/// limit stopped it at tick 12,429 of a 100,000-tick run and called the
+/// result a failure, which is exactly the kind of lie a guard is supposed
+/// to prevent.
+#[must_use]
+pub const fn step_limit_for(max_ticks: u64) -> u64 {
+    max_ticks.saturating_mul(100_000).saturating_add(10_000_000)
+}
+
+/// The limit for the C harness's default run length.
+pub const DEFAULT_STEP_LIMIT: u64 = step_limit_for(2000);
 
 /// The scenarios this crate can run.
 // Deliberately exhaustive: adding a scenario should fail to compile
@@ -54,6 +84,22 @@ pub const DEFAULT_STEP_LIMIT: u64 = 50_000_000;
 pub enum Scenario {
     /// `dynamic.c`.
     Dynamic,
+    /// `PollQ.c`.
+    PollQ,
+    /// `BlockQ.c`.
+    BlockQ,
+    /// `semtest.c`.
+    SemTest,
+    /// `countsem.c`.
+    CountSem,
+    /// `recmutex.c`.
+    RecMutex,
+    /// `blocktim.c`.
+    BlockTim,
+    /// `QPeek.c`.
+    QPeek,
+    /// `GenQTest.c`.
+    GenQTest,
 }
 
 impl Scenario {
@@ -62,6 +108,14 @@ impl Scenario {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Dynamic => "dynamic",
+            Self::PollQ => "PollQ",
+            Self::BlockQ => "BlockQ",
+            Self::SemTest => "semtest",
+            Self::CountSem => "countsem",
+            Self::RecMutex => "recmutex",
+            Self::BlockTim => "blocktim",
+            Self::QPeek => "QPeek",
+            Self::GenQTest => "GenQTest",
         }
     }
 
@@ -70,6 +124,14 @@ impl Scenario {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "dynamic" => Some(Self::Dynamic),
+            "PollQ" => Some(Self::PollQ),
+            "BlockQ" => Some(Self::BlockQ),
+            "semtest" => Some(Self::SemTest),
+            "countsem" => Some(Self::CountSem),
+            "recmutex" => Some(Self::RecMutex),
+            "blocktim" => Some(Self::BlockTim),
+            "QPeek" => Some(Self::QPeek),
+            "GenQTest" => Some(Self::GenQTest),
             _ => None,
         }
     }
@@ -77,7 +139,17 @@ impl Scenario {
     /// Every scenario, for a runner that wants to sweep the corpus.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::Dynamic]
+        &[
+            Self::Dynamic,
+            Self::PollQ,
+            Self::BlockQ,
+            Self::SemTest,
+            Self::CountSem,
+            Self::RecMutex,
+            Self::BlockTim,
+            Self::QPeek,
+            Self::GenQTest,
+        ]
     }
 }
 

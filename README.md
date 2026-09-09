@@ -22,17 +22,22 @@ flashed" means no chip has run it.
 
 ## Status
 
-**K1 — 1 scenario of 9.**
+**K1 — 9 scenarios of 9. Passed.**
 
-`dynamic` is remade and its trace is **identical to the C kernel's for
-100,000 ticks**, with the counters equal, and its own
-`xAreDynamicPriorityTasksStillRunning()` check passes. The runner, the trace
-sink and the gate exist, so each remaining scenario is a port of one C file.
+`dynamic`, `PollQ`, `BlockQ`, `semtest`, `countsem`, `recmutex`, `blocktim`,
+`QPeek` and `GenQTest` are remade — 34 tasks — and every one produces a
+trace **identical to the C kernel's for 100,000 ticks**, 8,408,764 lines in
+all, with the counters equal and each scenario's own `xAre...StillRunning()`
+check passing.
 
 ```sh
-kairos conform dynamic --ticks 100000    # from the Kairos umbrella
+kairos conform --all --ticks 100000      # from the Kairos umbrella
 kairos conform --all --exits             # every scenario, with the sim-time column
 ```
+
+`tests/conformance.rs` pins all nine offline — counters, line count, byte
+count and an FNV-1a/64 digest of the C kernel's own trace file — so drift
+fails in CI, which has no C toolchain.
 
 A scenario here is a **state machine, one step per C statement**: the
 kernel is `forbid(unsafe)` and cannot switch stacks, so a task cannot block

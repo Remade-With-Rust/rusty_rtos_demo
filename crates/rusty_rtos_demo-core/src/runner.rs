@@ -14,6 +14,12 @@
 //! What the model does cost is that a scenario must be written as a state
 //! machine, which is why `rusty_rtos_demo` remakes the demo tasks rather
 //! than linking them.
+//!
+//! A **blocking** call costs one thing more. `xQueueReceive( q, &v, 100 )`
+//! stops the C task inside the call; here it returns `Blocked` and the body
+//! makes the same call again, at the same `pc`, when it next runs — which
+//! is exactly when the C thread would have resumed. See
+//! `rusty_rtos_kernel::queue`.
 
 use core::array;
 use core::fmt;
@@ -24,15 +30,16 @@ use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
 use rusty_rtos_kernel::{Kernel, items_for, lists_for};
 use rusty_rtos_port::SimPort;
 
-use crate::dynamic;
 use crate::trace::LineTrace;
+use crate::{blockq, blocktim, countsem, dynamic, genqtest, pollq, qpeek, recmutex, semtest};
 
 /// How many tasks a scenario may create, idle and timer included.
-pub const TASKS: usize = 16;
-/// How many queues a scenario may create, the timer queue included.
-pub const QUEUES: usize = 4;
+pub const TASKS: usize = 24;
+/// How many queues, semaphores and mutexes a scenario may create, the timer
+/// command queue included.
+pub const QUEUES: usize = 12;
 /// Shared queue storage, in items.
-pub const SLOTS: usize = 64;
+pub const SLOTS: usize = 128;
 
 /// The kernel every scenario runs on: the `Posix_GCC` demo's configuration
 /// (the one the oracle runs), the deterministic sim port, and a sink that
@@ -57,51 +64,71 @@ pub enum Step {
     Finish(bool),
 }
 
-/// The demo scenario's shared state — the C file's statics, by name.
-#[derive(Debug, Clone, Copy, Default)]
+/// The statics of whichever scenario is running.
+///
+/// A C demo file keeps its state in file-scope variables; this is that, one
+/// variant per file, so a scenario cannot accidentally read another's.
+#[derive(Debug, Clone, Copy)]
+pub enum State {
+    /// Nothing started yet.
+    None,
+    /// `dynamic.c`.
+    Dynamic(dynamic::State),
+    /// `PollQ.c`.
+    PollQ(pollq::State),
+    /// `BlockQ.c`.
+    BlockQ(blockq::State),
+    /// `semtest.c`.
+    SemTest(semtest::State),
+    /// `countsem.c`.
+    CountSem(countsem::State),
+    /// `recmutex.c`.
+    RecMutex(recmutex::State),
+    /// `blocktim.c`.
+    BlockTim(blocktim::State),
+    /// `QPeek.c`.
+    QPeek(qpeek::State),
+    /// `GenQTest.c`.
+    GenQTest(genqtest::State),
+}
+
+/// What every task body can reach: the scenario's statics, plus the two
+/// things the harness owns.
+#[derive(Debug, Clone, Copy)]
 pub struct Shared {
-    /// `ulCounter`.
-    pub counter: u32,
-    /// `usCheckVariable`.
-    pub check_variable: u16,
-    /// `ulExpectedValue`.
-    pub expected_value: u32,
-    /// `xSuspendedQueueSendError`.
-    pub send_error: bool,
-    /// `xSuspendedQueueReceiveError`.
-    pub receive_error: bool,
-    /// `xContinuousIncrementHandle`.
-    pub cnt_inc: TaskHandle,
-    /// `xLimitedIncrementHandle`.
-    pub lim_inc: TaskHandle,
-    /// `xSuspendedTestQueue`.
-    pub queue: QueueHandle,
-    /// The timer service task's command queue.
-    pub timer_queue: QueueHandle,
-    /// `usLastTaskCheck`, a static inside the check function.
-    pub last_task_check: u16,
-    /// `ulLastExpectedValue`, likewise.
-    pub last_expected_value: u32,
     /// When the check task ends the run.
     pub max_ticks: u64,
+    /// The timer service task's command queue.
+    pub timer_queue: QueueHandle,
+    /// The running scenario's statics.
+    pub state: State,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self {
+            max_ticks: 0,
+            timer_queue: QueueHandle::NULL,
+            state: State::None,
+        }
+    }
 }
 
 impl Shared {
-    /// `xAreDynamicPriorityTasksStillRunning`, statics and all.
-    pub fn dynamic_still_running(&mut self) -> bool {
-        let mut running = true;
-        if self.check_variable == self.last_task_check {
-            running = false;
+    /// The scenario's own `xAre...StillRunning()`.
+    pub fn still_running(&mut self) -> bool {
+        match &mut self.state {
+            State::None => false,
+            State::Dynamic(s) => s.still_running(),
+            State::PollQ(s) => s.still_running(),
+            State::BlockQ(s) => s.still_running(),
+            State::SemTest(s) => s.still_running(),
+            State::CountSem(s) => s.still_running(),
+            State::RecMutex(s) => s.still_running(),
+            State::BlockTim(s) => s.still_running(),
+            State::QPeek(s) => s.still_running(),
+            State::GenQTest(s) => s.still_running(),
         }
-        if self.expected_value == self.last_expected_value {
-            running = false;
-        }
-        if self.send_error || self.receive_error {
-            running = false;
-        }
-        self.last_task_check = self.check_variable;
-        self.last_expected_value = self.expected_value;
-        running
     }
 }
 
@@ -117,8 +144,24 @@ pub enum Body {
     Timer(Timer),
     /// The harness's check task.
     Check(Check),
-    /// `dynamic`'s five tasks.
+    /// `dynamic.c`'s five tasks.
     Dynamic(dynamic::Body),
+    /// `PollQ.c`'s two.
+    PollQ(pollq::Body),
+    /// `BlockQ.c`'s six.
+    BlockQ(blockq::Body),
+    /// `semtest.c`'s four.
+    SemTest(semtest::Body),
+    /// `countsem.c`'s two.
+    CountSem(countsem::Body),
+    /// `recmutex.c`'s three.
+    RecMutex(recmutex::Body),
+    /// `blocktim.c`'s two.
+    BlockTim(blocktim::Body),
+    /// `QPeek.c`'s four.
+    QPeek(qpeek::Body),
+    /// `GenQTest.c`'s five.
+    GenQTest(genqtest::Body),
 }
 
 impl Body {
@@ -129,6 +172,14 @@ impl Body {
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),
             Self::Dynamic(b) => b.step(k, s),
+            Self::PollQ(b) => b.step(k, s),
+            Self::BlockQ(b) => b.step(k, s),
+            Self::SemTest(b) => b.step(k, s),
+            Self::CountSem(b) => b.step(k, s),
+            Self::RecMutex(b) => b.step(k, s),
+            Self::BlockTim(b) => b.step(k, s),
+            Self::QPeek(b) => b.step(k, s),
+            Self::GenQTest(b) => b.step(k, s),
         }
     }
 }
@@ -202,6 +253,8 @@ pub struct Check {
 impl Check {
     /// The C `harnessCHECK_PERIOD_TICKS`.
     pub const PERIOD: u64 = 100;
+    /// The C `harnessCHECK_TASK_PRIORITY`.
+    pub const PRIORITY: u8 = 5;
 
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self.pc {
@@ -213,7 +266,7 @@ impl Check {
             _ => {
                 self.pc = 0;
                 if k.tick_count() >= s.max_ticks {
-                    Step::Finish(s.dynamic_still_running())
+                    Step::Finish(s.still_running())
                 } else {
                     Step::Continue
                 }
@@ -286,6 +339,35 @@ impl<W: fmt::Write> Runner<W> {
         &self.kernel
     }
 
+    /// Attach a body to a task.
+    ///
+    /// A handle outside the runner's table is ignored rather than
+    /// panicking; the run then ends at [`Body::Empty`] with a failed
+    /// verdict, which is visible where a panic would not be.
+    pub fn attach(&mut self, task: TaskHandle, body: Body) {
+        if let Some(slot) = self.bodies.get_mut(usize::from(task.index())) {
+            *slot = body;
+        }
+    }
+
+    /// Create the check task and start the scheduler — the part every
+    /// scenario does identically, in the order `oracle/harness/main.c` does
+    /// it: the scenario's own tasks first, then `CHECK`, then
+    /// `vTaskStartScheduler`.
+    ///
+    /// # Errors
+    /// As the kernel's create calls.
+    pub fn start_common(&mut self, max_ticks: u64) -> Result<()> {
+        let check = self.kernel.create_task("CHECK", Check::PRIORITY)?;
+        let started = self.kernel.start_scheduler()?;
+        self.shared.max_ticks = max_ticks;
+        self.shared.timer_queue = started.timer_queue;
+        self.attach(check, Body::Check(Check::default()));
+        self.attach(started.idle, Body::Idle(Idle::default()));
+        self.attach(started.timer, Body::Timer(Timer::default()));
+        Ok(())
+    }
+
     /// Advance the scenario by one step: pay any debt the running task owes
     /// from a call it was preempted inside, or run one statement of its
     /// body.
@@ -325,15 +407,9 @@ impl<W: fmt::Write> Runner<W> {
         }
     }
 
-    /// Attach a body to a task.
-    ///
-    /// A handle outside the runner's table is ignored rather than
-    /// panicking; the run then ends at [`Body::Empty`] with a failed
-    /// verdict, which is visible where a panic would not be.
-    pub fn attach(&mut self, task: TaskHandle, body: Body) {
-        if let Some(slot) = self.bodies.get_mut(usize::from(task.index())) {
-            *slot = body;
-        }
+    /// The sink's writer, so a deliverable can flush it once at the end.
+    pub fn into_writer(self) -> W {
+        self.kernel.into_trace().into_writer()
     }
 
     /// Run until a body finishes the scenario or the step limit is hit.
@@ -341,11 +417,6 @@ impl<W: fmt::Write> Runner<W> {
     /// The limit is the runaway guard the first oracle run taught us to
     /// want: an 8 GB trace is not a diagnosis.
     pub fn run(&mut self, step_limit: u64) -> Verdict {
-        let Self {
-            kernel,
-            bodies,
-            shared,
-        } = self;
         let mut steps: u64 = 0;
         let mut pass = false;
         let mut runaway = false;
@@ -355,16 +426,7 @@ impl<W: fmt::Write> Runner<W> {
                 break;
             }
             steps = steps.wrapping_add(1);
-            // A task switched out mid-call resumes inside that call, not at
-            // its next statement.
-            if kernel.resume_pending() {
-                continue;
-            }
-            let index = usize::from(kernel.current().index());
-            let Some(body) = bodies.get_mut(index) else {
-                break;
-            };
-            match body.step(kernel, shared) {
+            match self.step_once() {
                 Step::Continue => {}
                 Step::Finish(verdict) => {
                     pass = verdict;
@@ -372,24 +434,10 @@ impl<W: fmt::Write> Runner<W> {
                 }
             }
         }
-        Verdict {
-            pass: pass && !runaway && !self.kernel.trace().failed(),
-            ticks: self.kernel.tick_count(),
-            yields: self.kernel.port().yields(),
-            exits: self.kernel.port().exits(),
-            lines: self.kernel.trace().lines(),
-            steps,
-            runaway,
-        }
+        self.verdict(steps, pass, runaway)
     }
 
-    /// The sink's writer, so a deliverable can flush it once at the end.
-    pub fn into_writer(self) -> W {
-        self.kernel.into_trace().into_writer()
-    }
-
-    /// Write the verdict line the C harness writes, and hand back the
-    /// writer.
+    /// Write the verdict line the C harness writes.
     ///
     /// # Errors
     /// Propagates a write failure from the sink.
@@ -402,7 +450,6 @@ impl<W: fmt::Write> Runner<W> {
             lines,
             ..
         } = *verdict;
-        // The C prints `lines=` counting every trace line but not itself.
         writeln!(
             self.kernel.trace_mut().writer_mut(),
             "KAIROS_RESULT {scenario} {outcome} ticks={ticks} yields={yields} exits={exits} lines={lines}"

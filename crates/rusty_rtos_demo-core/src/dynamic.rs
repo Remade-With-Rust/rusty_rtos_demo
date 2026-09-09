@@ -22,7 +22,9 @@
 use core::fmt;
 
 use rusty_rtos_core::error::Result;
+use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
 use rusty_rtos_kernel::TaskState;
+use rusty_rtos_kernel::queue::Wait;
 
 use crate::runner::{self, Runner, Shared, SimKernel, Step};
 
@@ -36,6 +38,50 @@ pub const MAX_COUNT: u32 = 0xff;
 pub const NO_BLOCK: u64 = 0;
 /// `priSUSPENDED_QUEUE_LENGTH`.
 pub const QUEUE_LENGTH: usize = 1;
+
+/// `dynamic.c`'s file-scope variables.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct State {
+    /// `ulCounter`.
+    pub counter: u32,
+    /// `usCheckVariable`.
+    pub check_variable: u16,
+    /// `ulExpectedValue`.
+    pub expected_value: u32,
+    /// `xSuspendedQueueSendError`.
+    pub send_error: bool,
+    /// `xSuspendedQueueReceiveError`.
+    pub receive_error: bool,
+    /// `xContinuousIncrementHandle`.
+    pub cnt_inc: TaskHandle,
+    /// `xLimitedIncrementHandle`.
+    pub lim_inc: TaskHandle,
+    /// `xSuspendedTestQueue`.
+    pub queue: QueueHandle,
+    /// `usLastTaskCheck`, a static inside the check function.
+    pub last_task_check: u16,
+    /// `ulLastExpectedValue`, likewise.
+    pub last_expected_value: u32,
+}
+
+impl State {
+    /// `xAreDynamicPriorityTasksStillRunning`, statics and all.
+    pub fn still_running(&mut self) -> bool {
+        let mut running = true;
+        if self.check_variable == self.last_task_check {
+            running = false;
+        }
+        if self.expected_value == self.last_expected_value {
+            running = false;
+        }
+        if self.send_error || self.receive_error {
+            running = false;
+        }
+        self.last_task_check = self.check_variable;
+        self.last_expected_value = self.expected_value;
+        running
+    }
+}
 
 /// One of the scenario's five tasks.
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +100,9 @@ pub enum Body {
 
 impl Body {
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+        let runner::State::Dynamic(s) = &mut s.state else {
+            return Step::Finish(false);
+        };
         match self {
             Self::CntInc(b) => b.step(k, s),
             Self::LimInc(b) => b.step(k, s),
@@ -73,7 +122,7 @@ pub struct CntInc {
 }
 
 impl CntInc {
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
         match self.pc {
             // uxOurPriority = uxTaskPriorityGet( NULL );
             0 => {
@@ -118,7 +167,7 @@ pub struct LimInc {
 }
 
 impl LimInc {
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
         match self.pc {
             // vTaskSuspend( NULL ); — before the loop starts.
             0 => {
@@ -157,7 +206,7 @@ pub struct CCtrl {
 
 impl CCtrl {
     #[allow(clippy::too_many_lines)]
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
         match self.pc {
             // ulCounter = 0; sLoops = 0;
             0 => {
@@ -287,7 +336,7 @@ pub struct SuspTx {
 }
 
 impl SuspTx {
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
         match self.pc {
             // vTaskSuspendAll();
             0 => {
@@ -296,9 +345,12 @@ impl SuspTx {
             }
             // if( xQueueSend( ..., priNO_BLOCK ) != pdTRUE ) { xSuspendedQueueSendError = pdTRUE; }
             1 => {
-                if k.queue_send(s.queue, u64::from(self.value), NO_BLOCK)
-                    .is_err()
-                {
+                // A zero block time cannot park the task, so `Ready` or
+                // an error is the whole answer.
+                if !matches!(
+                    k.queue_send(s.queue, u64::from(self.value), NO_BLOCK),
+                    Ok(Wait::Ready(()))
+                ) {
                     s.send_error = true;
                 }
                 self.pc = 2;
@@ -334,7 +386,7 @@ pub struct SuspRx {
 }
 
 impl SuspRx {
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
         match self.pc {
             // vTaskSuspendAll();  (outer)
             0 => {
@@ -349,11 +401,11 @@ impl SuspRx {
             // xGotValue = xQueueReceive( ..., priNO_BLOCK );
             2 => {
                 match k.queue_receive(s.queue, NO_BLOCK) {
-                    Ok(value) => {
+                    Ok(Wait::Ready(value)) => {
                         self.received = u32::try_from(value).unwrap_or(u32::MAX);
                         self.got_value = true;
                     }
-                    Err(_) => self.got_value = false,
+                    Ok(Wait::Blocked) | Err(_) => self.got_value = false,
                 }
                 self.pc = 3;
             }
@@ -391,39 +443,29 @@ impl SuspRx {
     }
 }
 
-/// Build the scenario in the order the C harness builds it:
-/// `vStartDynamicPriorityTasks()`, then the harness's own check task, then
-/// `vTaskStartScheduler()` — which is what puts `IDLE`, the timer queue and
-/// `Tmr Svc` in the trace where they are.
+/// `vStartDynamicPriorityTasks`, in the C's order — which is what puts the
+/// queue at ordinal `q1` and the five tasks where they are in the trace.
 ///
 /// # Errors
-/// As the kernel's create calls: [`rusty_rtos_core::Error::Full`] when the
-/// geometry is too small for the scenario.
+/// As the kernel's create calls.
 pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
-    let (queue, cnt_inc, lim_inc, c_ctrl, susp_tx, susp_rx, check) = {
+    let (queue, cnt_inc, lim_inc, c_ctrl, susp_tx, susp_rx) = {
         let k = runner.kernel_mut();
-        // vStartDynamicPriorityTasks
         let queue = k.queue_create(QUEUE_LENGTH)?;
         let cnt_inc = k.create_task("CNT_INC", 0)?;
         let lim_inc = k.create_task("LIM_INC", 1)?;
         let c_ctrl = k.create_task("C_CTRL", 0)?;
         let susp_tx = k.create_task("SUSP_TX", 0)?;
         let susp_rx = k.create_task("SUSP_RX", 0)?;
-        // oracle/harness/main.c
-        let check = k.create_task("CHECK", 5)?;
-        (queue, cnt_inc, lim_inc, c_ctrl, susp_tx, susp_rx, check)
+        (queue, cnt_inc, lim_inc, c_ctrl, susp_tx, susp_rx)
     };
-    {
-        let s = runner.shared_mut();
-        s.queue = queue;
-        s.cnt_inc = cnt_inc;
-        s.lim_inc = lim_inc;
-        s.max_ticks = max_ticks;
-    }
-    // vTaskStartScheduler(): IDLE, the timer queue, Tmr Svc.
-    let started = runner.kernel_mut().start_scheduler()?;
-    runner.shared_mut().timer_queue = started.timer_queue;
-
+    runner.shared_mut().state = runner::State::Dynamic(State {
+        queue,
+        cnt_inc,
+        lim_inc,
+        ..State::default()
+    });
+    runner.start_common(max_ticks)?;
     runner.attach(
         cnt_inc,
         runner::Body::Dynamic(Body::CntInc(CntInc::default())),
@@ -441,8 +483,5 @@ pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()
         susp_rx,
         runner::Body::Dynamic(Body::SuspRx(SuspRx::default())),
     );
-    runner.attach(check, runner::Body::Check(runner::Check::default()));
-    runner.attach(started.idle, runner::Body::Idle(runner::Idle::default()));
-    runner.attach(started.timer, runner::Body::Timer(runner::Timer::default()));
     Ok(())
 }

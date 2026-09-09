@@ -6,10 +6,12 @@ Family plan: Kairos `docs/plans/rtos-mission.md` (umbrella repo) — its §2.1
 names what this package remakes, wraps and never touches; its §6 carries the
 phase this package's kill test belongs to. This file obeys that one.
 
-Written 2026-09-09. Status: **K1 — 1 scenario of 9.** `dynamic` is remade
-and its trace is identical to the C kernel's for 100,000 ticks. The runner,
-the trace sink and the gate exist, so the remaining eight are each a port of
-one C file.
+Written 2026-09-09. Status: **K1 — 9 scenarios of 9, passed.** `dynamic`,
+`PollQ`, `BlockQ`, `semtest`, `countsem`, `recmutex`, `blocktim`, `QPeek`
+and `GenQTest` are remade — 34 tasks — and every one traces identically to
+the C kernel for 100,000 ticks, 8,408,764 lines in all, counters included.
+All nine are pinned offline in `tests/conformance.rs` so drift fails in CI,
+which has no C toolchain.
 
 ---
 

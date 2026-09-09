@@ -24,7 +24,10 @@ use std::io::{self, BufWriter, Write as _};
 use std::process::ExitCode;
 
 use rusty_rtos_demo_core::runner::Runner;
-use rusty_rtos_demo_core::{DEFAULT_STEP_LIMIT, Scenario, Step, Verdict, dynamic};
+use rusty_rtos_demo_core::{
+    Scenario, Step, Verdict, blockq, blocktim, countsem, dynamic, genqtest, pollq, qpeek, recmutex,
+    semtest, step_limit_for,
+};
 
 /// The C harness's default run length.
 const DEFAULT_MAX_TICKS: u64 = 2000;
@@ -71,7 +74,7 @@ impl fmt::Write for Stderr {
 /// oracle's while this runs. Each row is `<line> <exits> <nesting>
 /// <suspended> <pended>`, which lines up with the C harness's
 /// `KAIROS_TRACE_EXITS` column.
-fn run_stepping(runner: &mut Runner<Stderr>) -> Verdict {
+fn run_stepping(runner: &mut Runner<Stderr>, step_limit: u64) -> Verdict {
     let mut steps: u64 = 0;
     let mut pass = false;
     let mut runaway = false;
@@ -79,7 +82,7 @@ fn run_stepping(runner: &mut Runner<Stderr>) -> Verdict {
     let stdout = io::stdout();
     let mut out = BufWriter::with_capacity(1 << 20, stdout.lock());
     loop {
-        if steps >= DEFAULT_STEP_LIMIT {
+        if steps >= step_limit {
             runaway = true;
             break;
         }
@@ -143,6 +146,14 @@ fn main() -> ExitCode {
     };
     let started = match scenario {
         Scenario::Dynamic => dynamic::start(&mut runner, max_ticks),
+        Scenario::PollQ => pollq::start(&mut runner, max_ticks),
+        Scenario::BlockQ => blockq::start(&mut runner, max_ticks),
+        Scenario::SemTest => semtest::start(&mut runner, max_ticks),
+        Scenario::CountSem => countsem::start(&mut runner, max_ticks),
+        Scenario::RecMutex => recmutex::start(&mut runner, max_ticks),
+        Scenario::BlockTim => blocktim::start(&mut runner, max_ticks),
+        Scenario::QPeek => qpeek::start(&mut runner, max_ticks),
+        Scenario::GenQTest => genqtest::start(&mut runner, max_ticks),
     };
     if let Err(e) = started {
         let mut err = io::stderr();
@@ -150,10 +161,11 @@ fn main() -> ExitCode {
         return ExitCode::from(3);
     }
 
+    let limit = step_limit_for(max_ticks);
     let verdict = if env::var_os("KAIROS_SIM_EXITS").is_some() {
-        run_stepping(&mut runner)
+        run_stepping(&mut runner, limit)
     } else {
-        runner.run(DEFAULT_STEP_LIMIT)
+        runner.run(limit)
     };
     let _ = runner.finish(scenario.name(), &verdict);
     let mut sink = runner.into_writer();
@@ -161,10 +173,7 @@ fn main() -> ExitCode {
 
     if verdict.runaway {
         let mut err = io::stderr();
-        let _ = writeln!(
-            err,
-            "the scenario did not finish within {DEFAULT_STEP_LIMIT} steps"
-        );
+        let _ = writeln!(err, "the scenario did not finish within {limit} steps");
     }
     if verdict.pass {
         ExitCode::SUCCESS
