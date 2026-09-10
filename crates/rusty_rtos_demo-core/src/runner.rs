@@ -330,7 +330,7 @@ pub enum Body {
 }
 
 impl Body {
-    fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self {
             Self::Empty => Step::Finish(false),
             Self::Idle(b) => b.step(k),

@@ -299,6 +299,43 @@ fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
     }
 }
 
+/// The `async` arm reproduces `PollQ`'s trace exactly (mission plan, K2.2).
+///
+/// It cannot go in [`PINS`] because it does not go through [`Runner`] — its
+/// task bodies are futures that borrow the kernel, so it owns one — but the
+/// claim is the same claim and the number is `PollQ`'s own: the same
+/// digest, the same bytes, the same exits. If an `.await` ever landed
+/// somewhere a `pc` arm did not, this is what would say so.
+#[test]
+fn the_async_arm_reproduces_pollqs_trace_exactly() {
+    let pollq = PINS
+        .iter()
+        .find(|p| p.name == "PollQ")
+        .expect("PollQ is pinned");
+    let (verdict, digest) = rusty_rtos_demo_core::pollq_async::run(
+        Digest::new(),
+        PIN_TICKS,
+        step_limit_for(PIN_TICKS).saturating_mul(4),
+        false,
+    )
+    .expect("the async arm starts");
+
+    assert!(verdict.pass, "the async arm failed its own check");
+    assert!(!verdict.runaway, "the async arm did not finish");
+    assert_eq!(verdict.ticks, pollq.ticks, "ticks");
+    assert_eq!(verdict.yields, pollq.yields, "portYIELD() calls");
+    assert_eq!(
+        verdict.exits, pollq.exits,
+        "outermost critical-section exits, which is sim time itself"
+    );
+    assert_eq!(verdict.lines, pollq.lines, "trace lines");
+    assert_eq!(digest.bytes, pollq.bytes, "trace size in bytes");
+    assert_eq!(
+        digest.hash, pollq.digest,
+        "the async arm's trace differs from PollQ's; an await point has          moved off a `pc` arm boundary"
+    );
+}
+
 /// Two runs must agree — and, under Miri, this is also the only test that
 /// puts the kernel's arenas and lists through an interpreter that checks
 /// them. Twenty ticks is short enough to finish there and long enough for

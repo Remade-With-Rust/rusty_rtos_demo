@@ -26,7 +26,7 @@ use std::process::ExitCode;
 use rusty_rtos_demo_core::runner::Runner;
 use rusty_rtos_demo_core::{
     Scenario, Step, Verdict, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem,
-    mbamp, pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
+    mbamp, pollq, pollq_async, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
     step_limit_for, timerdemo,
 };
 
@@ -135,6 +135,46 @@ fn main() -> ExitCode {
         .unwrap_or(DEFAULT_MAX_TICKS);
 
     let debug_exits = env::var_os("KAIROS_TRACE_EXITS").is_some();
+
+    // The async arm builds its own kernel: its task bodies are futures that
+    // borrow it, so it cannot live inside a `Runner` that also owns them.
+    if scenario == Scenario::PollQAsync {
+        let sink = rusty_rtos_demo_core::LineTrace::new(Stderr::new())
+            .with_exit_column(debug_exits)
+            .into_writer();
+        let limit = step_limit_for(max_ticks).saturating_mul(4);
+        return match pollq_async::run(sink, max_ticks, limit, debug_exits) {
+            Ok((verdict, mut sink)) => {
+                use fmt::Write as _;
+                let outcome = if verdict.pass { "pass" } else { "fail" };
+                let _ = writeln!(
+                    sink,
+                    "KAIROS_RESULT {} {outcome} ticks={} yields={} exits={} lines={}",
+                    scenario.name(),
+                    verdict.ticks,
+                    verdict.yields,
+                    verdict.exits,
+                    verdict.lines
+                );
+                let _ = sink.flush();
+                if verdict.runaway {
+                    let mut err = io::stderr();
+                    let _ = writeln!(err, "the scenario did not finish within {limit} steps");
+                }
+                if verdict.pass {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            Err(e) => {
+                let mut err = io::stderr();
+                let _ = writeln!(err, "scenario {name} could not start: {e:?}");
+                ExitCode::from(3)
+            }
+        };
+    }
+
     let mut runner = match Runner::with_sink(
         rusty_rtos_demo_core::LineTrace::new(Stderr::new()).with_exit_column(debug_exits),
     ) {
@@ -163,6 +203,8 @@ fn main() -> ExitCode {
         Scenario::EventGroups => eventgroups::start(&mut runner, max_ticks),
         Scenario::MbAmp => mbamp::start(&mut runner, max_ticks),
         Scenario::PollQTyped => pollq_typed::start(&mut runner, max_ticks),
+        // Handled above: it owns its own kernel.
+        Scenario::PollQAsync => Ok(()),
     };
     if let Err(e) = started {
         let mut err = io::stderr();
