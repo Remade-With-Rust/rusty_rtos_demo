@@ -47,7 +47,9 @@ struct Pin {
     bytes: usize,
 }
 
-/// What the C kernel printed for all nine scenarios at 2000 ticks.
+/// What the C kernel printed for every scenario in the corpus at 2000
+/// ticks. Each row is read off that scenario's own `oracle/traces/*.trace`,
+/// so the pin is the C kernel's output and not a previous run of ours.
 const PINS: [Pin; 16] = [
     Pin {
         name: "dynamic",
@@ -241,7 +243,8 @@ impl fmt::Write for Digest {
 #[test]
 #[cfg_attr(
     miri,
-    ignore = "2000 ticks x 9 scenarios is hours under Miri;               `every_scenario_is_deterministic` covers the same code there"
+    ignore = "2000 ticks x the whole corpus is hours under Miri; \
+                     `every_scenario_is_deterministic` covers the same code there"
 )]
 fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
     for pin in &PINS {

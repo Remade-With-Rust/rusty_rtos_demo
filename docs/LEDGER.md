@@ -53,6 +53,7 @@ software timer daemon and event groups.
 | scenarios covered | **16**, of which 14 are on K2's list of eighteen | the other two are K1's; `IntQueue` is out of scope for a signal-driven host port, and the four that remain are blocked above the kernel (umbrella `docs/LEDGER.md`) |
 | the gate | `kairos conform --all --ticks 100000` from the umbrella | as K1's |
 | offline regression | all sixteen pinned by counters, line count, byte count and an FNV-1a/64 digest of the C kernel's own 2000-tick trace file | `tests/conformance.rs::every_scenario_reproduces_the_c_kernels_trace_and_counters` |
+| Miri | green over all sixteen | `cargo +nightly miri test --workspace`, 891.8 s: every scenario twice at 20 ticks (`cfg!(miri)` shortens them so the interpreter can finish), which is what puts the arenas, the lists, the byte allocator and the timer ring through an interpreter that checks them |
 
 ## The build fact (2026-09-09)
 
