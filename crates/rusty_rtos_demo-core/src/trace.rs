@@ -10,8 +10,27 @@
 //! Tasks and timers are named by their own names; queues, event groups and
 //! stream buffers by a **creation ordinal per kind** (`q1`, `g1`, `s1`),
 //! because a C `Queue_t` has no name and its address is not reproducible.
-//! Our handles carry the ordinal already — a handle's index is its creation
-//! order — so the two sides agree without either keeping a table.
+//!
+//! The ordinal is read straight off the handle: a handle's index is its
+//! creation order, so the two sides agree without either keeping a table.
+//!
+//! **That equivalence is not exact, and `AbortDelay` is where it shows.**
+//! The C harness keys its ordinal on the object's ADDRESS
+//! (`prvOrdinalPerKind` searches a table of pointers): a freed object
+//! leaves its entry behind, so a new object gets a NEW ordinal unless the
+//! allocator hands back the same block. Our arena reuses a freed INDEX.
+//! The two agree whenever the recreated object is the same size — which is
+//! every scenario in the corpus that deletes, `EventGroupsDemo`'s
+//! same-size groups included — and part when it is not: `AbortDelay`
+//! deletes a binary semaphore and creates a 1-item queue, `malloc` returns
+//! a different block, and the C says `q3` where our index says `q2`.
+//!
+//! A running count was tried and reverted. It makes `AbortDelay` identical
+//! for all 2,549 lines and breaks `EventGroupsDemo`, whose C ordinals reuse
+//! precisely because its addresses do. Neither rule is right, because the
+//! subject identity in the contract is an allocator address. The index rule
+//! is kept because it is the one that matches seventeen scenarios; the
+//! eighteenth is an owner decision recorded in the ledger.
 //!
 //! Nothing here allocates: the sink writes through a [`fmt::Write`], which
 //! on the host is a stderr adapter and on a chip is a UART.

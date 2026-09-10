@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "rusty_rtos_core"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_core#d04b94f1594d954ec9d5dd32f488985221662327"
+source = "git+https://github.com/Remade-With-Rust/rusty_rtos_core#564cec81e8a1e84f572da832a46957a4a6f4377b"
 
 [[package]]
 name = "rusty_rtos_demo"
@@ -26,7 +26,7 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_kernel"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#01c5bb19108a25545e869c314675ae5c64c23c85"
+source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#c6e57aef8b05c25df8bfe76cb216cb20a8f8ed31"
 dependencies = [
  "rusty_rtos_kernel-core",
 ]
@@ -34,7 +34,7 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_kernel-core"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#01c5bb19108a25545e869c314675ae5c64c23c85"
+source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#c6e57aef8b05c25df8bfe76cb216cb20a8f8ed31"
 dependencies = [
  "rusty_rtos_core",
 ]

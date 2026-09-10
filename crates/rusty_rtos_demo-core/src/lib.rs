@@ -42,6 +42,7 @@
 //! The other eight scenarios of the K1 corpus follow the same shape and
 //! land as they are written; the plan's kill test is the whole nine.
 
+pub mod abortdelay;
 pub mod blockq;
 pub mod blocktim;
 pub mod countsem;
@@ -112,6 +113,8 @@ pub enum Scenario {
     RecMutex,
     /// `blocktim.c`.
     BlockTim,
+    /// `AbortDelay.c`.
+    AbortDelay,
     /// `QPeek.c`.
     QPeek,
     /// `GenQTest.c`.
@@ -150,6 +153,7 @@ impl Scenario {
             Self::CountSem => "countsem",
             Self::RecMutex => "recmutex",
             Self::BlockTim => "blocktim",
+            Self::AbortDelay => "AbortDelay",
             Self::QPeek => "QPeek",
             Self::GenQTest => "GenQTest",
             Self::QOverwrite => "QueueOverwrite",
@@ -175,6 +179,7 @@ impl Scenario {
             "countsem" => Some(Self::CountSem),
             "recmutex" => Some(Self::RecMutex),
             "blocktim" => Some(Self::BlockTim),
+            "AbortDelay" => Some(Self::AbortDelay),
             "QPeek" => Some(Self::QPeek),
             "GenQTest" => Some(Self::GenQTest),
             "QueueOverwrite" => Some(Self::QOverwrite),

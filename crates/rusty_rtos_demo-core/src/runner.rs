@@ -38,8 +38,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq, pollq_typed,
-    qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    abortdelay, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
+    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -197,6 +197,8 @@ pub enum State {
     RecMutex(recmutex::State),
     /// `blocktim.c`.
     BlockTim(blocktim::State),
+    /// `AbortDelay.c`.
+    AbortDelay(abortdelay::State),
     /// `QPeek.c`.
     QPeek(qpeek::State),
     /// `GenQTest.c`.
@@ -262,6 +264,7 @@ impl Shared {
             State::CountSem(s) => s.still_running(),
             State::RecMutex(s) => s.still_running(),
             State::BlockTim(s) => s.still_running(),
+            State::AbortDelay(s) => s.still_running(),
             State::QPeek(s) => s.still_running(),
             State::GenQTest(s) => s.still_running(),
             // Reached only when the hook is not the matching one,
@@ -310,6 +313,8 @@ pub enum Body<'a> {
     Dynamic(dynamic::Body),
     /// `PollQ.c`'s two.
     PollQ(pollq::Body),
+    /// `AbortDelay.c`'s two.
+    AbortDelay(abortdelay::Body),
     /// `BlockQ.c`'s six.
     BlockQ(blockq::Body),
     /// `semtest.c`'s four.
@@ -394,6 +399,7 @@ impl Body<'_> {
             Self::Check(b) => b.step(k, s),
             Self::Dynamic(b) => b.step(k, s),
             Self::PollQ(b) => b.step(k, s),
+            Self::AbortDelay(b) => b.step(k, s),
             Self::BlockQ(b) => b.step(k, s),
             Self::SemTest(b) => b.step(k, s),
             Self::CountSem(b) => b.step(k, s),
