@@ -46,6 +46,7 @@ pub mod blockq;
 pub mod blocktim;
 pub mod countsem;
 pub mod dynamic;
+pub mod eventgroups;
 pub mod genqtest;
 pub mod intsem;
 pub mod pollq;
@@ -120,6 +121,8 @@ pub enum Scenario {
     SbInt,
     /// `TimerDemo.c`.
     TimerDemo,
+    /// `EventGroupsDemo.c`.
+    EventGroups,
 }
 
 impl Scenario {
@@ -141,6 +144,7 @@ impl Scenario {
             Self::IntSem => "IntSemTest",
             Self::SbInt => "StreamBufferInterrupt",
             Self::TimerDemo => "TimerDemo",
+            Self::EventGroups => "EventGroupsDemo",
         }
     }
 
@@ -162,6 +166,7 @@ impl Scenario {
             "IntSemTest" => Some(Self::IntSem),
             "StreamBufferInterrupt" => Some(Self::SbInt),
             "TimerDemo" => Some(Self::TimerDemo),
+            "EventGroupsDemo" => Some(Self::EventGroups),
             _ => None,
         }
     }
@@ -184,6 +189,7 @@ impl Scenario {
             Self::IntSem,
             Self::SbInt,
             Self::TimerDemo,
+            Self::EventGroups,
         ]
     }
 }

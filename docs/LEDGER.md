@@ -32,6 +32,27 @@ number and will not have one until a chip runs the corpus (K3).
 | the same nine at 2000 ticks | identical, and pinned | `tests/conformance.rs` asserts the counters, the line count, the byte count and an FNV-1a/64 digest **of the C kernel's own trace file** for all nine. It needs no C toolchain and so runs in CI. Poisoning one pinned number fails the test, so the gate is not vacuous |
 | determinism | two runs of the sim agree on exits, lines and the trace digest, all nine | `tests/conformance.rs::every_scenario_is_deterministic` |
 
+## The corpus against the C kernel (2026-09-09, K2)
+
+Six scenarios more, and with them the first *interrupt* halves, the
+software timer daemon and event groups.
+
+| scenario | lines identical at 100,000 ticks | ticks | yields | exits |
+|---|---|---|---|---|
+| `QueueOverwrite` | 1,300,381 | 100000 | 1001 | 1600001 |
+| `QueueSetPolling` | 1,373,605 | 100000 | 34334 | 1066673 |
+| `IntSemTest` | 132,892 | 100001 | 5114 | 119569 |
+| `StreamBufferInterrupt` | 113,299 | 100009 | 1331 | 104709 |
+| `TimerDemo` | 156,491 | 100000 | 7128 | 133355 |
+| `EventGroupsDemo` | 1,202,786 | 100003 | 248478 | 825505 |
+| **all fifteen** | **12,688,209** | equal on both sides | equal | equal |
+
+| gate | result | method |
+|---|---|---|
+| scenarios covered | **15**, of which 13 are on K2's list of eighteen | the other two are K1's; `IntQueue` is out of scope for a signal-driven host port, and the four that remain are blocked above the kernel (umbrella `docs/LEDGER.md`) |
+| the gate | `kairos conform --all --ticks 100000` from the umbrella | as K1's |
+| offline regression | all fifteen pinned by counters, line count, byte count and an FNV-1a/64 digest of the C kernel's own 2000-tick trace file | `tests/conformance.rs::every_scenario_reproduces_the_c_kernels_trace_and_counters` |
+
 ## The build fact (2026-09-09)
 
 | gate | result | method |

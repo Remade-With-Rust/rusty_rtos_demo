@@ -20,7 +20,7 @@ use core::fmt;
 use rusty_rtos_core::error::Result;
 use rusty_rtos_demo_core::{
     Runner, blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek,
-    qsetpoll, recmutex, sbint, semtest, step_limit_for, timerdemo,
+    eventgroups, qsetpoll, recmutex, sbint, semtest, step_limit_for, timerdemo,
 };
 
 /// How long every pinned run is. The check task ends the run at the first
@@ -48,7 +48,7 @@ struct Pin {
 }
 
 /// What the C kernel printed for all nine scenarios at 2000 ticks.
-const PINS: [Pin; 14] = [
+const PINS: [Pin; 15] = [
     Pin {
         name: "dynamic",
         start: dynamic::start,
@@ -188,6 +188,16 @@ const PINS: [Pin; 14] = [
         lines: 3091,
         digest: 0x3d09_b339_924c_3819,
         bytes: 90_192,
+    },
+    Pin {
+        name: "EventGroupsDemo",
+        start: eventgroups::start,
+        ticks: 2001,
+        yields: 4991,
+        exits: 16_577,
+        lines: 24_157,
+        digest: 0xfffc_9266_b473_a8f0,
+        bytes: 702_507,
     },
 ];
 

@@ -33,8 +33,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek, qsetpoll,
-    recmutex, sbint, semtest, timerdemo,
+    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, pollq, qoverwrite, qpeek,
+    qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -58,6 +58,10 @@ pub const BYTES: usize = 2048;
 /// greediest: one auto-reload timer per test plus the one-shots.
 pub const TIMERS: usize = 32;
 
+/// How many event groups the corpus needs at once. `EventGroupsDemo` makes
+/// three: the one its own tasks share and the two the rendezvous test uses.
+pub const GROUPS: usize = 4;
+
 /// The kernel every scenario runs on: the `Posix_GCC` demo's configuration
 /// (the one the oracle runs), the deterministic sim port, and a sink that
 /// writes the contract's lines.
@@ -68,12 +72,13 @@ pub type SimKernel<W> = Kernel<
     TickIsr,
     TASKS,
     { items_for(TASKS, TIMERS) },
-    { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES) },
+    { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS) },
     QUEUES,
     SLOTS,
     BUFFERS,
     BYTES,
     TIMERS,
+    GROUPS,
 >;
 
 /// `vApplicationTickHook`: the interrupt half of whichever scenario is
@@ -103,6 +108,8 @@ pub enum TickIsr {
     StreamBufferInterrupt(sbint::Isr),
     /// `vTimerPeriodicISRTests`, and the four timer callbacks with it.
     TimerDemo(timerdemo::Isr),
+    /// `vPeriodicEventGroupsProcessing`.
+    EventGroups(eventgroups::Isr),
 }
 
 impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
@@ -125,6 +132,20 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
             Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
             Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
+            Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
+        }
+    }
+
+    /// `PendedFunction_t`: what the daemon task runs on behalf of an
+    /// interrupt. The two event-group deferrals are the kernel's own, so
+    /// they go straight back to it.
+    fn pended(kernel: &mut SimKernel<W>, function: u16, param1: u64, param2: u64) {
+        if matches!(
+            function,
+            rusty_rtos_kernel::events::PENDED_SET_BITS
+                | rusty_rtos_kernel::events::PENDED_CLEAR_BITS
+        ) {
+            let _ = kernel.event_group_pended_call(function, param1, param2);
         }
     }
 }
@@ -174,6 +195,8 @@ pub enum State {
     SbInt(sbint::State),
     /// `TimerDemo.c`.
     TimerDemo(timerdemo::State),
+    /// `EventGroupsDemo.c`.
+    EventGroups(eventgroups::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -207,6 +230,9 @@ impl Shared {
         if let (State::TimerDemo(s), TickIsr::TimerDemo(isr)) = (&mut self.state, isr) {
             return s.still_running(isr, Check::PERIOD);
         }
+        if let (State::EventGroups(s), TickIsr::EventGroups(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -226,6 +252,8 @@ impl Shared {
             State::SbInt(s) => s.still_running(),
             // Reached only when the hook is not the matching one.
             State::TimerDemo(s) => s.still_running(timerdemo::Isr::default(), Check::PERIOD),
+            // As above.
+            State::EventGroups(s) => s.still_running(eventgroups::Isr::default()),
         }
     }
 }
@@ -270,6 +298,12 @@ pub enum Body {
     SbInt(sbint::Body),
     /// `TimerDemo.c`'s one.
     TimerDemo(timerdemo::Body),
+    /// `EventGroupsDemo.c`'s master.
+    EventGroupsMaster(eventgroups::Master),
+    /// Its slave.
+    EventGroupsSlave(eventgroups::Slave),
+    /// And its two rendezvous tasks.
+    EventGroupsSync(eventgroups::Sync),
 }
 
 impl Body {
@@ -293,6 +327,9 @@ impl Body {
             Self::IntSem(b) => b.step(k, s),
             Self::SbInt(b) => b.step(k, s),
             Self::TimerDemo(b) => b.step(k, s),
+            Self::EventGroupsMaster(b) => b.step(k, s),
+            Self::EventGroupsSlave(b) => b.step(k, s),
+            Self::EventGroupsSync(b) => b.step(k, s),
         }
     }
 }
