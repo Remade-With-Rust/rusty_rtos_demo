@@ -22,7 +22,7 @@ flashed" means no chip has run it.
 
 ## Status
 
-**K2 in progress — 13 scenarios; K1's 9 of 9 passed.**
+**K2 in progress — the corpus is 13 scenarios; K1's 9 of 9 passed.**
 
 `QueueOverwrite`, `QueueSetPolling`, `IntSemTest` and
 `StreamBufferInterrupt` join the K1 nine, bringing the corpus to
