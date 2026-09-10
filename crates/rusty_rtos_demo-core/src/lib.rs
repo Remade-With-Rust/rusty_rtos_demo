@@ -33,6 +33,9 @@
 //! | [`blocktim`] | `blocktim.c` | block times and `xTaskDelayUntil`, to the tick |
 //! | [`qpeek`] | `QPeek.c` | peeking, and the order four priorities wake in |
 //! | [`genqtest`] | `GenQTest.c` | both queue ends, and priority inheritance |
+//! | [`qoverwrite`] | `QueueOverwrite.c` | a queue of one, and the first interrupt half |
+//! | [`qsetpoll`] | `QueueSetPolling.c` | a queue set polled by a task, written by an interrupt |
+//! | [`intsem`] | `IntSemTest.c` | semaphores and a mutex given from an interrupt |
 //!
 //! The other eight scenarios of the K1 corpus follow the same shape and
 //! land as they are written; the plan's kill test is the whole nine.
@@ -42,8 +45,11 @@ pub mod blocktim;
 pub mod countsem;
 pub mod dynamic;
 pub mod genqtest;
+pub mod intsem;
 pub mod pollq;
+pub mod qoverwrite;
 pub mod qpeek;
+pub mod qsetpoll;
 pub mod recmutex;
 pub mod runner;
 pub mod semtest;
@@ -100,6 +106,12 @@ pub enum Scenario {
     QPeek,
     /// `GenQTest.c`.
     GenQTest,
+    /// `QueueOverwrite.c`.
+    QOverwrite,
+    /// `QueueSetPolling.c`.
+    QSetPoll,
+    /// `IntSemTest.c`.
+    IntSem,
 }
 
 impl Scenario {
@@ -116,6 +128,9 @@ impl Scenario {
             Self::BlockTim => "blocktim",
             Self::QPeek => "QPeek",
             Self::GenQTest => "GenQTest",
+            Self::QOverwrite => "QueueOverwrite",
+            Self::QSetPoll => "QueueSetPolling",
+            Self::IntSem => "IntSemTest",
         }
     }
 
@@ -132,6 +147,9 @@ impl Scenario {
             "blocktim" => Some(Self::BlockTim),
             "QPeek" => Some(Self::QPeek),
             "GenQTest" => Some(Self::GenQTest),
+            "QueueOverwrite" => Some(Self::QOverwrite),
+            "QueueSetPolling" => Some(Self::QSetPoll),
+            "IntSemTest" => Some(Self::IntSem),
             _ => None,
         }
     }
@@ -149,6 +167,9 @@ impl Scenario {
             Self::BlockTim,
             Self::QPeek,
             Self::GenQTest,
+            Self::QOverwrite,
+            Self::QSetPoll,
+            Self::IntSem,
         ]
     }
 }

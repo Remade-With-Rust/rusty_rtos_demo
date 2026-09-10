@@ -25,8 +25,8 @@ use std::process::ExitCode;
 
 use rusty_rtos_demo_core::runner::Runner;
 use rusty_rtos_demo_core::{
-    Scenario, Step, Verdict, blockq, blocktim, countsem, dynamic, genqtest, pollq, qpeek, recmutex,
-    semtest, step_limit_for,
+    Scenario, Step, Verdict, blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite,
+    qpeek, qsetpoll, recmutex, semtest, step_limit_for,
 };
 
 /// The C harness's default run length.
@@ -154,6 +154,9 @@ fn main() -> ExitCode {
         Scenario::BlockTim => blocktim::start(&mut runner, max_ticks),
         Scenario::QPeek => qpeek::start(&mut runner, max_ticks),
         Scenario::GenQTest => genqtest::start(&mut runner, max_ticks),
+        Scenario::QOverwrite => qoverwrite::start(&mut runner, max_ticks),
+        Scenario::QSetPoll => qsetpoll::start(&mut runner, max_ticks),
+        Scenario::IntSem => intsem::start(&mut runner, max_ticks),
     };
     if let Err(e) = started {
         let mut err = io::stderr();

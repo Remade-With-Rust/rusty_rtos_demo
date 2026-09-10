@@ -19,8 +19,8 @@ use core::fmt;
 
 use rusty_rtos_core::error::Result;
 use rusty_rtos_demo_core::{
-    Runner, blockq, blocktim, countsem, dynamic, genqtest, pollq, qpeek, recmutex, semtest,
-    step_limit_for,
+    Runner, blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek,
+    qsetpoll, recmutex, semtest, step_limit_for,
 };
 
 /// How long every pinned run is. The check task ends the run at the first
@@ -48,7 +48,7 @@ struct Pin {
 }
 
 /// What the C kernel printed for all nine scenarios at 2000 ticks.
-const PINS: [Pin; 9] = [
+const PINS: [Pin; 12] = [
     Pin {
         name: "dynamic",
         start: dynamic::start,
@@ -138,6 +138,36 @@ const PINS: [Pin; 9] = [
         lines: 25126,
         digest: 0x99a0_03aa_8c2a_19b4,
         bytes: 683_187,
+    },
+    Pin {
+        name: "QueueOverwrite",
+        start: qoverwrite::start,
+        ticks: 2000,
+        yields: 21,
+        exits: 32001,
+        lines: 26021,
+        digest: 0x0bc1_5e6e_8a4e_12d3,
+        bytes: 532_729,
+    },
+    Pin {
+        name: "QueueSetPolling",
+        start: qsetpoll::start,
+        ticks: 2000,
+        yields: 688,
+        exits: 21345,
+        lines: 27496,
+        digest: 0xf354_2654_312b_9201,
+        bytes: 782_296,
+    },
+    Pin {
+        name: "IntSemTest",
+        start: intsem::start,
+        ticks: 2001,
+        yields: 107,
+        exits: 2417,
+        lines: 2702,
+        digest: 0x7e9f_c49f_3acc_645e,
+        bytes: 78_407,
     },
 ];
 

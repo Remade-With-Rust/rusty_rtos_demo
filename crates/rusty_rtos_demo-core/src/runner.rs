@@ -27,11 +27,15 @@ use core::fmt;
 use rusty_rtos_core::config::{Config, PosixDemoConfig};
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
+use rusty_rtos_core::hooks::TickHook;
 use rusty_rtos_kernel::{Kernel, items_for, lists_for};
 use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
-use crate::{blockq, blocktim, countsem, dynamic, genqtest, pollq, qpeek, recmutex, semtest};
+use crate::{
+    blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek,
+    qsetpoll, recmutex, semtest,
+};
 
 /// How many tasks a scenario may create, idle and timer included.
 pub const TASKS: usize = 24;
@@ -48,12 +52,49 @@ pub type SimKernel<W> = Kernel<
     PosixDemoConfig,
     SimPort,
     LineTrace<W>,
+    TickIsr,
     TASKS,
     { items_for(TASKS) },
     { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES) },
     QUEUES,
     SLOTS,
 >;
+
+/// `vApplicationTickHook`: the interrupt half of whichever scenario is
+/// running.
+///
+/// Upstream's own Posix demo runs every scenario at once and its tick hook
+/// calls all of their periodic ISR functions in turn
+/// (`vFullDemoTickHookFunction` in `Demo/Posix_GCC/main_full.c`). The
+/// Kairos harness runs one scenario per trace, so this dispatches to that
+/// one and no other — which is what keeps a trace attributable.
+///
+/// It is `Copy` because the kernel owns it and copies it out to run it:
+/// that is how the hook gets `&mut` the kernel it lives in without
+/// borrowing itself twice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TickIsr {
+    /// No interrupt half — the scenario has none, or none is installed.
+    #[default]
+    None,
+    /// `vQueueOverwritePeriodicISRDemo`.
+    QueueOverwrite(qoverwrite::Isr),
+    /// `vQueueSetPollingInterruptAccess`.
+    QueueSetPolling(qsetpoll::Isr),
+    /// `vInterruptSemaphorePeriodicTest`.
+    IntSem(intsem::Isr),
+}
+
+impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
+    fn tick(self, kernel: &mut SimKernel<W>) -> Self {
+        match self {
+            Self::None => self,
+            Self::QueueOverwrite(isr) => Self::QueueOverwrite(isr.tick(kernel)),
+            Self::QueueSetPolling(isr) => Self::QueueSetPolling(isr.tick(kernel)),
+            Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
+        }
+    }
+}
 
 /// What one step of a task body reports back to the runner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +131,12 @@ pub enum State {
     QPeek(qpeek::State),
     /// `GenQTest.c`.
     GenQTest(genqtest::State),
+    /// `QueueOverwrite.c`.
+    QOverwrite(qoverwrite::State),
+    /// `QueueSetPolling.c`.
+    QSetPoll(qsetpoll::State),
+    /// `IntSemTest.c`.
+    IntSem(intsem::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -116,7 +163,10 @@ impl Default for Shared {
 
 impl Shared {
     /// The scenario's own `xAre...StillRunning()`.
-    pub fn still_running(&mut self) -> bool {
+    pub fn still_running(&mut self, isr: TickIsr) -> bool {
+        if let (State::QOverwrite(s), TickIsr::QueueOverwrite(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -128,6 +178,11 @@ impl Shared {
             State::BlockTim(s) => s.still_running(),
             State::QPeek(s) => s.still_running(),
             State::GenQTest(s) => s.still_running(),
+            // Reached only when the hook is not the matching one,
+            // which means the interrupt half never ran.
+            State::QOverwrite(s) => s.still_running(qoverwrite::Isr::default()),
+            State::QSetPoll(s) => s.still_running(),
+            State::IntSem(s) => s.still_running(),
         }
     }
 }
@@ -162,6 +217,12 @@ pub enum Body {
     QPeek(qpeek::Body),
     /// `GenQTest.c`'s five.
     GenQTest(genqtest::Body),
+    /// `QueueOverwrite.c`'s one.
+    QOverwrite(qoverwrite::Body),
+    /// `QueueSetPolling.c`'s one.
+    QSetPoll(qsetpoll::Body),
+    /// `IntSemTest.c`'s three.
+    IntSem(intsem::Body),
 }
 
 impl Body {
@@ -180,6 +241,9 @@ impl Body {
             Self::BlockTim(b) => b.step(k, s),
             Self::QPeek(b) => b.step(k, s),
             Self::GenQTest(b) => b.step(k, s),
+            Self::QOverwrite(b) => b.step(k, s),
+            Self::QSetPoll(b) => b.step(k, s),
+            Self::IntSem(b) => b.step(k, s),
         }
     }
 }
@@ -266,7 +330,11 @@ impl Check {
             _ => {
                 self.pc = 0;
                 if k.tick_count() >= s.max_ticks {
-                    Step::Finish(s.still_running())
+                    // A scenario's `xAre...StillRunning()` reads what its
+                    // interrupt half latched as well as what its task half
+                    // did, so the hook comes along for the ride.
+                    let isr = *k.tick_hook();
+                    Step::Finish(s.still_running(isr))
                 } else {
                     Step::Continue
                 }
