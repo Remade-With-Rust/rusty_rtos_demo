@@ -54,6 +54,10 @@ pub const BUFFERS: usize = 8;
 /// The byte arena every stream buffer's ring comes out of.
 pub const BYTES: usize = 2048;
 
+/// How many software timers the corpus needs at once. `TimerDemo` is the
+/// greediest: one auto-reload timer per test plus the one-shots.
+pub const TIMERS: usize = 16;
+
 /// The kernel every scenario runs on: the `Posix_GCC` demo's configuration
 /// (the one the oracle runs), the deterministic sim port, and a sink that
 /// writes the contract's lines.
@@ -63,12 +67,13 @@ pub type SimKernel<W> = Kernel<
     LineTrace<W>,
     TickIsr,
     TASKS,
-    { items_for(TASKS) },
+    { items_for(TASKS, TIMERS) },
     { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES) },
     QUEUES,
     SLOTS,
     BUFFERS,
     BYTES,
+    TIMERS,
 >;
 
 /// `vApplicationTickHook`: the interrupt half of whichever scenario is
@@ -301,27 +306,79 @@ impl Idle {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Timer {
     pc: u8,
+    /// `xNextExpireTime`.
+    next_expire: u64,
+    /// `xListWasEmpty`.
+    list_was_empty: bool,
+    /// `xTimeNow`.
+    now: u64,
 }
 
 impl Timer {
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self.pc {
-            // prvProcessTimerOrBlockTask opens with vTaskSuspendAll().
+            // xNextExpireTime = prvGetNextExpireTime( &xListWasEmpty );
             0 => {
-                k.suspend_all();
+                let (next, empty) = k.timer_next_expire();
+                self.next_expire = next;
+                self.list_was_empty = empty;
                 self.pc = 1;
             }
-            // Both timer lists are empty, so the wait is indefinite.
+            // prvProcessTimerOrBlockTask opens with vTaskSuspendAll().
             1 => {
-                let _ = k.wait_for_message_restricted(s.timer_queue, 0, true);
+                k.suspend_all();
                 self.pc = 2;
             }
-            _ => {
+            // xTimeNow = prvSampleTimeNow( &xTimerListsWereSwitched );
+            2 => {
+                let (now, switched) = k.timer_sample_time_now().unwrap_or((0, false));
+                self.now = now;
+                if switched {
+                    // The lists were swapped under us, so this pass is over.
+                    self.pc = 7;
+                } else if !self.list_was_empty && self.next_expire <= now {
+                    self.pc = 3;
+                } else {
+                    self.pc = 5;
+                }
+            }
+            // ( void ) xTaskResumeAll(); prvProcessExpiredTimer( ... );
+            3 => {
+                let _ = k.resume_all();
+                self.pc = 4;
+            }
+            4 => {
+                let _ = k.process_expired_timer(self.next_expire, self.now);
+                self.pc = 8;
+            }
+            // The other arm: block on the queue until the head is due.
+            5 => {
+                if self.list_was_empty {
+                    self.list_was_empty = k.overflow_timer_list_is_empty();
+                }
+                let wait = self.next_expire.wrapping_sub(self.now);
+                let _ = k.wait_for_message_restricted(s.timer_queue, wait, self.list_was_empty);
+                self.pc = 6;
+            }
+            6 => {
                 if !k.resume_all() {
                     k.task_yield();
                 }
-                self.pc = 0;
+                self.pc = 8;
             }
+            // The switched-lists arm's resume.
+            7 => {
+                let _ = k.resume_all();
+                self.pc = 8;
+            }
+            // prvProcessReceivedCommands(): the C loops until the queue is
+            // empty, and one command per step is that loop unrolled — a
+            // callback in the middle of it can block, and the daemon has to
+            // be able to come back.
+            _ => match k.process_one_timer_command() {
+                Ok(rusty_rtos_kernel::queue::Wait::Ready(true)) => {}
+                _ => self.pc = 0,
+            },
         }
         Step::Continue
     }
