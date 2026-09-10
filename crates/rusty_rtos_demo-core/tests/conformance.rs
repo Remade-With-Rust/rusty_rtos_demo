@@ -20,7 +20,7 @@ use core::fmt;
 use rusty_rtos_core::error::Result;
 use rusty_rtos_demo_core::{
     Runner, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
-    qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, step_limit_for, timerdemo,
+    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, step_limit_for, timerdemo,
 };
 
 /// How long every pinned run is. The check task ends the run at the first
@@ -50,7 +50,7 @@ struct Pin {
 /// What the C kernel printed for every scenario in the corpus at 2000
 /// ticks. Each row is read off that scenario's own `oracle/traces/*.trace`,
 /// so the pin is the C kernel's output and not a previous run of ours.
-const PINS: [Pin; 16] = [
+const PINS: [Pin; 17] = [
     Pin {
         name: "dynamic",
         start: dynamic::start,
@@ -210,6 +210,22 @@ const PINS: [Pin; 16] = [
         lines: 2430,
         digest: 0x1d93_4bbd_dc9e_03d4,
         bytes: 71_089,
+    },
+    // `PollQ` again, written against the Rust face (mission plan, K2.1).
+    // Every number here is `PollQ`'s own, deliberately and to the digit —
+    // the same digest, the same byte count, the same exits. The typed
+    // queue moves a `u16` where the C-shaped one copies a `u64`, and if
+    // that cost so much as one critical-section exit these two rows would
+    // differ. This is the zero-cost claim, checkable with no C toolchain.
+    Pin {
+        name: "PollQ-typed",
+        start: pollq_typed::start,
+        ticks: 2001,
+        yields: 43,
+        exits: 2116,
+        lines: 2362,
+        digest: 0xf50b_bbbd_22ec_16d1,
+        bytes: 68_195,
     },
 ];
 

@@ -51,6 +51,7 @@ pub mod genqtest;
 pub mod intsem;
 pub mod mbamp;
 pub mod pollq;
+pub mod pollq_typed;
 pub mod qoverwrite;
 pub mod qpeek;
 pub mod qsetpoll;
@@ -126,6 +127,9 @@ pub enum Scenario {
     EventGroups,
     /// `MessageBufferAMP.c`.
     MbAmp,
+    /// `PollQ.c` against the Rust face — diffed against `PollQ`'s own
+    /// C oracle trace, because the face is supposed to cost nothing.
+    PollQTyped,
 }
 
 impl Scenario {
@@ -149,6 +153,7 @@ impl Scenario {
             Self::TimerDemo => "TimerDemo",
             Self::EventGroups => "EventGroupsDemo",
             Self::MbAmp => "MessageBufferAMP",
+            Self::PollQTyped => "PollQ-typed",
         }
     }
 
@@ -172,6 +177,7 @@ impl Scenario {
             "TimerDemo" => Some(Self::TimerDemo),
             "EventGroupsDemo" => Some(Self::EventGroups),
             "MessageBufferAMP" => Some(Self::MbAmp),
+            "PollQ-typed" => Some(Self::PollQTyped),
             _ => None,
         }
     }
@@ -196,6 +202,7 @@ impl Scenario {
             Self::TimerDemo,
             Self::EventGroups,
             Self::MbAmp,
+            Self::PollQTyped,
         ]
     }
 }

@@ -33,8 +33,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq, qoverwrite,
-    qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq, pollq_typed,
+    qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -210,6 +210,8 @@ pub enum State {
     EventGroups(eventgroups::State),
     /// `MessageBufferAMP.c`.
     MbAmp(mbamp::State),
+    /// `PollQ.c` again, against the Rust face (K2.1).
+    PollQTyped(pollq_typed::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -268,6 +270,7 @@ impl Shared {
             // As above.
             State::EventGroups(s) => s.still_running(eventgroups::Isr::default()),
             State::MbAmp(s) => s.still_running(),
+            State::PollQTyped(s) => s.still_running(),
         }
     }
 }
@@ -322,6 +325,8 @@ pub enum Body {
     MbAmpCoreA(mbamp::CoreA),
     /// And its two readers.
     MbAmpCoreB(mbamp::CoreB),
+    /// `PollQ.c`'s two, against the Rust face.
+    PollQTyped(pollq_typed::Body),
 }
 
 impl Body {
@@ -350,6 +355,7 @@ impl Body {
             Self::EventGroupsSync(b) => b.step(k, s),
             Self::MbAmpCoreA(b) => b.step(k, s),
             Self::MbAmpCoreB(b) => b.step(k, s),
+            Self::PollQTyped(b) => b.step(k, s),
         }
     }
 }
