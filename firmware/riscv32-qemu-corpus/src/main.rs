@@ -1,44 +1,54 @@
-//! The conformance corpus on a Cortex-M3, checked against the host's pins.
+//! The conformance corpus on **RV32**, checked against the host's pins.
 //!
-//! This is K3's main clause — "the full corpus check task passes on
-//! M3-qemu" — and the reason it can be answered before the family has a
-//! context-switching port is the demo's task model: a scenario is a state
-//! machine driven by [`Runner`], so it needs **no per-task stack and no
-//! heap**. `rusty_rtos_demo-core` is `no_std` with no `alloc`, and builds
-//! for `thumbv7m-none-eabi` unchanged.
+//! The Cortex-M3 twin of this cell answered K3's "the corpus passes on
+//! M3-qemu"; this one answers "and on RV32-qemu". The two are deliberately
+//! the same program over the same table — `rusty_rtos_demo_core::pins` —
+//! so what they compare is the *architecture* and nothing else.
+//!
+//! # Why this can run before the family has a RISC-V port
+//!
+//! For the same reason the M3 cell could: a scenario is a **state machine**
+//! driven by [`Runner`], one `step` per C statement with a `pc`, so a task
+//! needs no stack of its own and the kernel needs no context switch to run
+//! it. `rusty_rtos_demo-core` is `no_std` with **no `alloc`** and builds
+//! for `riscv32imac-unknown-none-elf` unchanged. That is a consequence of
+//! the K2 design — a blocking call's locals live in the TCB rather than on
+//! a C stack — rather than a trick, and this cell is the second time that
+//! property has paid for itself on a new architecture.
 //!
 //! # What makes this more than "it ran"
 //!
-//! Every scenario is run with the same FNV-1a/64 digest sink the host's
-//! `tests/conformance.rs` uses, and checked against **the same pinned
-//! numbers** — ticks, yields, exits, lines, the digest and the byte count.
-//! Those pins are the C kernel's: the host test diffs them against
-//! `oracle/traces/*`, so matching them here means this Cortex-M build
-//! produces a trace **byte-identical to the C FreeRTOS kernel's**, not
-//! merely a self-consistent one.
-//!
-//! Not a chosen subset, and not a second copy of the table: the whole
-//! corpus runs, and all three consumers — this cell, the RV32 cell and
-//! the host test — read `rusty_rtos_demo_core::pins`. A cell cannot
-//! silently disagree with the host about what the C kernel said.
+//! Every scenario is checked against the **C kernel's** numbers: ticks,
+//! yields, exits, lines, an FNV-1a/64 digest of the whole trace and its
+//! byte count. Those pins are diffed against `oracle/traces/*` by the
+//! host's `tests/conformance.rs`, so matching them here means this RISC-V
+//! build produces a trace byte-identical to C FreeRTOS's.
 //!
 //! `exits` is the one to watch. It is sim time itself — the count of
-//! outermost critical-section exits — so a port or a target that changed
-//! when the scheduler ran would move it long before it moved a digest.
+//! outermost critical-section exits — so a target that changed *when* the
+//! scheduler ran would move it long before it moved a digest.
 //!
 //! # What it does not claim
 //!
-//! No timing. QEMU is a translator, not a pipeline simulator, and the
-//! sibling `mps2-an385-qemu-region` cell measured six ways that it can
-//! supply no cycle, latency or work counter at all. This cell asserts
-//! only counts and a hash, which are exact on any host.
+//! No timing. QEMU is a translator, not a pipeline simulator, and
+//! `rusty_rtos_core/firmware/mps2-an385-qemu-region` measured six ways
+//! that it can supply no cycle, latency or work counter at all. This cell
+//! asserts only counts and a hash, which are exact on any host.
 
 #![no_std]
 #![no_main]
 
-use cortex_m_rt::entry;
-use cortex_m_semihosting::{debug, hprintln};
-use panic_semihosting as _;
+use riscv_rt::entry;
+use riscv_semihosting::{debug, hprintln};
+use panic_halt as _;
+
+// Linked for its side effect only: the `critical-section-single-hart`
+// feature's `_critical_section_1_0_acquire`/`_release` symbols, which
+// `riscv-semihosting` needs and bare metal does not otherwise supply.
+// This machine is single-hart, so disabling interrupts IS the critical
+// section — the same shape as the Cortex-M port's PRIMASK, arriving from
+// the other architecture.
+use riscv as _;
 
 use rusty_rtos_demo_core::pins::{Digest, PIN_TICKS, pins};
 use rusty_rtos_demo_core::runner::{Runner, Shared};
@@ -47,8 +57,8 @@ use rusty_rtos_demo_core::step_limit_for;
 #[entry]
 fn main() -> ! {
     hprintln!();
-    hprintln!("=== the Kairos conformance corpus on Cortex-M3 (mps2-an385, QEMU) ===");
-    hprintln!("target  thumbv7m-none-eabi, no_std, NO alloc, no per-task stack");
+    hprintln!("=== the Kairos conformance corpus on RV32 (QEMU virt) ===");
+    hprintln!("target  riscv32imac-unknown-none-elf, no_std, NO alloc, no per-task stack");
     hprintln!("check   every counter and the FNV-1a/64 trace digest against the");
     hprintln!("        host's pins, which are pinned against the C kernel's trace");
     hprintln!();
@@ -107,7 +117,7 @@ fn main() -> ! {
     hprintln!();
     if failed == 0 {
         hprintln!("RESULT: PASS -- {} scenarios byte-identical to the C kernel", table.len());
-        hprintln!("        on a Cortex-M3, at {} ticks each.", PIN_TICKS);
+        hprintln!("        on RV32, at {} ticks each.", PIN_TICKS);
         debug::exit(debug::EXIT_SUCCESS);
     } else {
         hprintln!("RESULT: FAIL -- {} of {} scenarios diverged", failed, table.len());

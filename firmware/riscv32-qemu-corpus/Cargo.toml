@@ -1,0 +1,32 @@
+# A firmware example: its own cargo project and its own workspace, because
+# the parent excludes `firmware/*`.
+[package]
+name = "riscv32-qemu-corpus"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# By path, as firmware/README.md requires for this repo's own crates. No
+# default features: `no_std`, and no allocator at all. Identical to the
+# Cortex-M cell's dependency line -- which is the point of this cell.
+rusty_rtos_demo-core = { path = "../../crates/rusty_rtos_demo-core", default-features = false }
+
+riscv-rt = "0.12"
+# `riscv-semihosting` takes a critical section around each host call, and on
+# bare metal somebody has to supply one. This machine is single-hart, so
+# disabling interrupts IS the critical section -- the same shape as the
+# Cortex-M port's PRIMASK, arriving from the other architecture.
+riscv = { version = "0.12", features = ["critical-section-single-hart"] }
+riscv-semihosting = "0.1"
+panic-halt = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+
+[workspace]

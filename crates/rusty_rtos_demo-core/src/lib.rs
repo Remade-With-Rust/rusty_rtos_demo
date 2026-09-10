@@ -50,6 +50,7 @@ pub mod eventgroups;
 pub mod genqtest;
 pub mod intsem;
 pub mod mbamp;
+pub mod pins;
 pub mod pollq;
 pub mod pollq_async;
 pub mod pollq_typed;
@@ -63,6 +64,7 @@ pub mod semtest;
 pub mod timerdemo;
 pub mod trace;
 
+pub use pins::{Digest, PIN_TICKS, Pin, pins};
 pub use runner::{Body, Runner, Shared, SimKernel, Step, Verdict};
 pub use trace::LineTrace;
 

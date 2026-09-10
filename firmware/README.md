@@ -27,3 +27,21 @@ Rules:
   `codegen-units = 1`, `panic = "abort"`, `overflow-checks = true`.
 - A firmware example is not a test. The library's tests run on the host and
   on the sim port.
+
+## The cells
+
+| cell | what it proves | needs |
+|---|---|---|
+| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | all 17 corpus scenarios byte-identical to the C kernel on **ARMv7-M** | nothing — `qemu-system-arm` |
+| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same 17, on **RV32** | nothing — `qemu-system-riscv32` |
+
+Both are gates: each ends by calling `debug::exit`, so the guest's verdict
+becomes QEMU's exit code, and `kairos check rusty_rtos_demo --qemu`
+discovers them off the filesystem rather than from a list here — a cell
+nobody runs is not a gate, and a hand-written list is how one gets
+forgotten.
+
+Both read the **same** pin table, `rusty_rtos_demo_core::pins`, which the
+host's `tests/conformance.rs` reads too. Three copies of seventeen rows of
+hex would drift, and a cell that silently disagrees with the host is worse
+than no cell.
