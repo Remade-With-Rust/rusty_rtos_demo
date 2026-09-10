@@ -20,7 +20,7 @@ use core::fmt;
 use rusty_rtos_core::error::Result;
 use rusty_rtos_demo_core::{
     Runner, blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek,
-    qsetpoll, recmutex, semtest, step_limit_for,
+    qsetpoll, recmutex, sbint, semtest, step_limit_for,
 };
 
 /// How long every pinned run is. The check task ends the run at the first
@@ -48,7 +48,7 @@ struct Pin {
 }
 
 /// What the C kernel printed for all nine scenarios at 2000 ticks.
-const PINS: [Pin; 12] = [
+const PINS: [Pin; 13] = [
     Pin {
         name: "dynamic",
         start: dynamic::start,
@@ -168,6 +168,16 @@ const PINS: [Pin; 12] = [
         lines: 2702,
         digest: 0x7e9f_c49f_3acc_645e,
         bytes: 78_407,
+    },
+    Pin {
+        name: "StreamBufferInterrupt",
+        start: sbint::start,
+        ticks: 2001,
+        yields: 28,
+        exits: 2085,
+        lines: 2273,
+        digest: 0xfd91_ee4f_e21d_dd17,
+        bytes: 66_145,
     },
 ];
 

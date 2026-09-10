@@ -74,7 +74,9 @@ impl Isr {
         self.call_count = self.call_count.wrapping_add(1);
         if self.call_count > ISR_TX_PERIOD {
             self.call_count = 0;
-            if k.queue_send_from_isr(self.queue, self.value_to_send).is_ok() {
+            if k.queue_send_from_isr(self.queue, self.value_to_send)
+                .is_ok()
+            {
                 self.value_to_send = self.value_to_send.wrapping_add(1);
             }
         }

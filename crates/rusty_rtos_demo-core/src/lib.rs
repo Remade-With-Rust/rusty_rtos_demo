@@ -36,6 +36,7 @@
 //! | [`qoverwrite`] | `QueueOverwrite.c` | a queue of one, and the first interrupt half |
 //! | [`qsetpoll`] | `QueueSetPolling.c` | a queue set polled by a task, written by an interrupt |
 //! | [`intsem`] | `IntSemTest.c` | semaphores and a mutex given from an interrupt |
+//! | [`sbint`] | `StreamBufferInterrupt.c` | a string streamed from the tick, byte by byte |
 //!
 //! The other eight scenarios of the K1 corpus follow the same shape and
 //! land as they are written; the plan's kill test is the whole nine.
@@ -52,6 +53,7 @@ pub mod qpeek;
 pub mod qsetpoll;
 pub mod recmutex;
 pub mod runner;
+pub mod sbint;
 pub mod semtest;
 pub mod trace;
 
@@ -112,6 +114,8 @@ pub enum Scenario {
     QSetPoll,
     /// `IntSemTest.c`.
     IntSem,
+    /// `StreamBufferInterrupt.c`.
+    SbInt,
 }
 
 impl Scenario {
@@ -131,6 +135,7 @@ impl Scenario {
             Self::QOverwrite => "QueueOverwrite",
             Self::QSetPoll => "QueueSetPolling",
             Self::IntSem => "IntSemTest",
+            Self::SbInt => "StreamBufferInterrupt",
         }
     }
 
@@ -150,6 +155,7 @@ impl Scenario {
             "QueueOverwrite" => Some(Self::QOverwrite),
             "QueueSetPolling" => Some(Self::QSetPoll),
             "IntSemTest" => Some(Self::IntSem),
+            "StreamBufferInterrupt" => Some(Self::SbInt),
             _ => None,
         }
     }
@@ -170,6 +176,7 @@ impl Scenario {
             Self::QOverwrite,
             Self::QSetPoll,
             Self::IntSem,
+            Self::SbInt,
         ]
     }
 }

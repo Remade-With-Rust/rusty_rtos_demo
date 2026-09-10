@@ -239,10 +239,7 @@ impl Master {
             }
             // if( xSemaphoreTake( xISRMutex, intsemNO_BLOCK ) != pdFAIL )
             9 => {
-                if matches!(
-                    k.semaphore_take(s.isr_mutex, NO_BLOCK),
-                    Ok(Wait::Ready(()))
-                ) {
+                if matches!(k.semaphore_take(s.isr_mutex, NO_BLOCK), Ok(Wait::Ready(()))) {
                     s.error = true;
                 }
                 self.pc = 10;
@@ -384,7 +381,10 @@ impl Counting {
         match self.pc {
             // if( uxQueueMessagesWaiting( xISRCountingSemaphore ) != 0 )
             0 => {
-                if k.queue_messages_waiting(s.isr_counting).unwrap_or(usize::MAX) != 0 {
+                if k.queue_messages_waiting(s.isr_counting)
+                    .unwrap_or(usize::MAX)
+                    != 0
+                {
                     s.error = true;
                 }
                 self.pc = 1;
@@ -406,14 +406,20 @@ impl Counting {
             }
             // if( uxQueueMessagesWaiting( xISRCountingSemaphore ) != intsemMAX_COUNT )
             4 => {
-                if k.queue_messages_waiting(s.isr_counting).unwrap_or(usize::MAX) != MAX_COUNT {
+                if k.queue_messages_waiting(s.isr_counting)
+                    .unwrap_or(usize::MAX)
+                    != MAX_COUNT
+                {
                     s.error = true;
                 }
                 self.pc = 5;
             }
             // if( uxQueueSpacesAvailable( xISRCountingSemaphore ) != 0 )
             5 => {
-                if k.queue_spaces_available(s.isr_counting).unwrap_or(usize::MAX) != 0 {
+                if k.queue_spaces_available(s.isr_counting)
+                    .unwrap_or(usize::MAX)
+                    != 0
+                {
                     s.error = true;
                 }
                 self.pc = 6;
@@ -518,7 +524,10 @@ pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()
     });
     runner.start_common(max_ticks)?;
     runner.attach(slave, runner::Body::IntSem(Body::Slave(Slave::default())));
-    runner.attach(master, runner::Body::IntSem(Body::Master(Master::default())));
+    runner.attach(
+        master,
+        runner::Body::IntSem(Body::Master(Master::default())),
+    );
     runner.attach(
         counting,
         runner::Body::IntSem(Body::Counting(Counting::default())),

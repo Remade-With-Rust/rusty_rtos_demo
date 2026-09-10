@@ -33,8 +33,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek,
-    qsetpoll, recmutex, semtest,
+    blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek, qsetpoll,
+    recmutex, sbint, semtest,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -44,6 +44,15 @@ pub const TASKS: usize = 24;
 pub const QUEUES: usize = 12;
 /// Shared queue storage, in items.
 pub const SLOTS: usize = 128;
+
+/// How many stream and message buffers the corpus needs at once.
+///
+/// `MessageBufferAMP` is the greediest: two message buffers plus the ones
+/// `StreamBufferDemo` makes and remakes.
+pub const BUFFERS: usize = 8;
+
+/// The byte arena every stream buffer's ring comes out of.
+pub const BYTES: usize = 2048;
 
 /// The kernel every scenario runs on: the `Posix_GCC` demo's configuration
 /// (the one the oracle runs), the deterministic sim port, and a sink that
@@ -58,6 +67,8 @@ pub type SimKernel<W> = Kernel<
     { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES) },
     QUEUES,
     SLOTS,
+    BUFFERS,
+    BYTES,
 >;
 
 /// `vApplicationTickHook`: the interrupt half of whichever scenario is
@@ -83,6 +94,8 @@ pub enum TickIsr {
     QueueSetPolling(qsetpoll::Isr),
     /// `vInterruptSemaphorePeriodicTest`.
     IntSem(intsem::Isr),
+    /// `vBasicStreamBufferSendFromISR`.
+    StreamBufferInterrupt(sbint::Isr),
 }
 
 impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
@@ -92,6 +105,7 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::QueueOverwrite(isr) => Self::QueueOverwrite(isr.tick(kernel)),
             Self::QueueSetPolling(isr) => Self::QueueSetPolling(isr.tick(kernel)),
             Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
+            Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
         }
     }
 }
@@ -137,6 +151,8 @@ pub enum State {
     QSetPoll(qsetpoll::State),
     /// `IntSemTest.c`.
     IntSem(intsem::State),
+    /// `StreamBufferInterrupt.c`.
+    SbInt(sbint::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -183,6 +199,7 @@ impl Shared {
             State::QOverwrite(s) => s.still_running(qoverwrite::Isr::default()),
             State::QSetPoll(s) => s.still_running(),
             State::IntSem(s) => s.still_running(),
+            State::SbInt(s) => s.still_running(),
         }
     }
 }
@@ -223,6 +240,8 @@ pub enum Body {
     QSetPoll(qsetpoll::Body),
     /// `IntSemTest.c`'s three.
     IntSem(intsem::Body),
+    /// `StreamBufferInterrupt.c`'s one.
+    SbInt(sbint::Body),
 }
 
 impl Body {
@@ -244,6 +263,7 @@ impl Body {
             Self::QOverwrite(b) => b.step(k, s),
             Self::QSetPoll(b) => b.step(k, s),
             Self::IntSem(b) => b.step(k, s),
+            Self::SbInt(b) => b.step(k, s),
         }
     }
 }
