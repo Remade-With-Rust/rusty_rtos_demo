@@ -45,13 +45,14 @@ software timer daemon and event groups.
 | `StreamBufferInterrupt` | 113,299 | 100009 | 1331 | 104709 |
 | `TimerDemo` | 156,491 | 100000 | 7128 | 133355 |
 | `EventGroupsDemo` | 1,202,786 | 100003 | 248478 | 825505 |
-| **all fifteen** | **12,688,209** | equal on both sides | equal | equal |
+| `MessageBufferAMP` | 120,513 | 100032 | 3469 | 103217 |
+| **all sixteen** | **12,808,722** | equal on both sides | equal | equal |
 
 | gate | result | method |
 |---|---|---|
-| scenarios covered | **15**, of which 13 are on K2's list of eighteen | the other two are K1's; `IntQueue` is out of scope for a signal-driven host port, and the four that remain are blocked above the kernel (umbrella `docs/LEDGER.md`) |
+| scenarios covered | **16**, of which 14 are on K2's list of eighteen | the other two are K1's; `IntQueue` is out of scope for a signal-driven host port, and the four that remain are blocked above the kernel (umbrella `docs/LEDGER.md`) |
 | the gate | `kairos conform --all --ticks 100000` from the umbrella | as K1's |
-| offline regression | all fifteen pinned by counters, line count, byte count and an FNV-1a/64 digest of the C kernel's own 2000-tick trace file | `tests/conformance.rs::every_scenario_reproduces_the_c_kernels_trace_and_counters` |
+| offline regression | all sixteen pinned by counters, line count, byte count and an FNV-1a/64 digest of the C kernel's own 2000-tick trace file | `tests/conformance.rs::every_scenario_reproduces_the_c_kernels_trace_and_counters` |
 
 ## The build fact (2026-09-09)
 

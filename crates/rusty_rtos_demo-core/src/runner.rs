@@ -33,8 +33,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, pollq, qoverwrite, qpeek,
-    qsetpoll, recmutex, sbint, semtest, timerdemo,
+    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq, qoverwrite,
+    qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -110,6 +110,9 @@ pub enum TickIsr {
     TimerDemo(timerdemo::Isr),
     /// `vPeriodicEventGroupsProcessing`.
     EventGroups(eventgroups::Isr),
+    /// `MessageBufferAMP`'s replaced `sbSEND_COMPLETED`. It has no tick
+    /// half at all — the seam it uses is the send, not the timer.
+    MessageBufferAmp(mbamp::Isr),
 }
 
 impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
@@ -133,12 +136,20 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
             Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
             Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
+            Self::MessageBufferAmp(_) => self,
         }
     }
 
     /// `PendedFunction_t`: what the daemon task runs on behalf of an
     /// interrupt. The two event-group deferrals are the kernel's own, so
     /// they go straight back to it.
+    fn send_completed(
+        kernel: &mut SimKernel<W>,
+        buffer: rusty_rtos_core::handle::StreamBufferHandle,
+    ) -> bool {
+        mbamp::send_completed(kernel, buffer)
+    }
+
     fn pended(kernel: &mut SimKernel<W>, function: u16, param1: u64, param2: u64) {
         if matches!(
             function,
@@ -197,6 +208,8 @@ pub enum State {
     TimerDemo(timerdemo::State),
     /// `EventGroupsDemo.c`.
     EventGroups(eventgroups::State),
+    /// `MessageBufferAMP.c`.
+    MbAmp(mbamp::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -254,6 +267,7 @@ impl Shared {
             State::TimerDemo(s) => s.still_running(timerdemo::Isr::default(), Check::PERIOD),
             // As above.
             State::EventGroups(s) => s.still_running(eventgroups::Isr::default()),
+            State::MbAmp(s) => s.still_running(),
         }
     }
 }
@@ -304,6 +318,10 @@ pub enum Body {
     EventGroupsSlave(eventgroups::Slave),
     /// And its two rendezvous tasks.
     EventGroupsSync(eventgroups::Sync),
+    /// `MessageBufferAMP.c`'s writer.
+    MbAmpCoreA(mbamp::CoreA),
+    /// And its two readers.
+    MbAmpCoreB(mbamp::CoreB),
 }
 
 impl Body {
@@ -330,6 +348,8 @@ impl Body {
             Self::EventGroupsMaster(b) => b.step(k, s),
             Self::EventGroupsSlave(b) => b.step(k, s),
             Self::EventGroupsSync(b) => b.step(k, s),
+            Self::MbAmpCoreA(b) => b.step(k, s),
+            Self::MbAmpCoreB(b) => b.step(k, s),
         }
     }
 }

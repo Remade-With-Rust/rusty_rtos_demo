@@ -49,6 +49,7 @@ pub mod dynamic;
 pub mod eventgroups;
 pub mod genqtest;
 pub mod intsem;
+pub mod mbamp;
 pub mod pollq;
 pub mod qoverwrite;
 pub mod qpeek;
@@ -123,6 +124,8 @@ pub enum Scenario {
     TimerDemo,
     /// `EventGroupsDemo.c`.
     EventGroups,
+    /// `MessageBufferAMP.c`.
+    MbAmp,
 }
 
 impl Scenario {
@@ -145,6 +148,7 @@ impl Scenario {
             Self::SbInt => "StreamBufferInterrupt",
             Self::TimerDemo => "TimerDemo",
             Self::EventGroups => "EventGroupsDemo",
+            Self::MbAmp => "MessageBufferAMP",
         }
     }
 
@@ -167,6 +171,7 @@ impl Scenario {
             "StreamBufferInterrupt" => Some(Self::SbInt),
             "TimerDemo" => Some(Self::TimerDemo),
             "EventGroupsDemo" => Some(Self::EventGroups),
+            "MessageBufferAMP" => Some(Self::MbAmp),
             _ => None,
         }
     }
@@ -190,6 +195,7 @@ impl Scenario {
             Self::SbInt,
             Self::TimerDemo,
             Self::EventGroups,
+            Self::MbAmp,
         ]
     }
 }

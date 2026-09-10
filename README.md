@@ -22,12 +22,12 @@ flashed" means no chip has run it.
 
 ## Status
 
-**K2 in progress — the corpus is 15 scenarios; K1's 9 of 9 passed.**
+**K2 in progress — the corpus is 16 scenarios; K1's 9 of 9 passed.**
 
 `QueueOverwrite`, `QueueSetPolling`, `IntSemTest`,
-`StreamBufferInterrupt`, `TimerDemo` and `EventGroupsDemo` join the K1
-nine, bringing the corpus to 12,688,209 trace lines identical to the C
-kernel at 100,000 ticks each. They are the first scenarios with an
+`StreamBufferInterrupt`, `TimerDemo`, `EventGroupsDemo` and
+`MessageBufferAMP` join the K1 nine, bringing the corpus to 12,808,722
+trace lines identical to the C kernel at 100,000 ticks each. They are the first scenarios with an
 *interrupt* half: `TickIsr` is dispatched from the kernel's tick exactly
 where `vApplicationTickHook` runs, and the last two are the first to reach
 the software timer daemon — `TimerDemo` through its own commands and
