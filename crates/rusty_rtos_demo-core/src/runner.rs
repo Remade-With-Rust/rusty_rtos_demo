@@ -34,7 +34,7 @@ use rusty_rtos_port::SimPort;
 use crate::trace::LineTrace;
 use crate::{
     blockq, blocktim, countsem, dynamic, genqtest, intsem, pollq, qoverwrite, qpeek, qsetpoll,
-    recmutex, sbint, semtest,
+    recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -56,7 +56,7 @@ pub const BYTES: usize = 2048;
 
 /// How many software timers the corpus needs at once. `TimerDemo` is the
 /// greediest: one auto-reload timer per test plus the one-shots.
-pub const TIMERS: usize = 16;
+pub const TIMERS: usize = 32;
 
 /// The kernel every scenario runs on: the `Posix_GCC` demo's configuration
 /// (the one the oracle runs), the deterministic sim port, and a sink that
@@ -101,9 +101,22 @@ pub enum TickIsr {
     IntSem(intsem::Isr),
     /// `vBasicStreamBufferSendFromISR`.
     StreamBufferInterrupt(sbint::Isr),
+    /// `vTimerPeriodicISRTests`, and the four timer callbacks with it.
+    TimerDemo(timerdemo::Isr),
 }
 
 impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
+    fn timer(
+        kernel: &mut SimKernel<W>,
+        timer: rusty_rtos_core::handle::TimerHandle,
+        callback: u16,
+        _id: u64,
+    ) {
+        if matches!(kernel.tick_hook(), Self::TimerDemo(_)) {
+            timerdemo::timer_callback(kernel, timer, callback);
+        }
+    }
+
     fn tick(self, kernel: &mut SimKernel<W>) -> Self {
         match self {
             Self::None => self,
@@ -111,6 +124,7 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::QueueSetPolling(isr) => Self::QueueSetPolling(isr.tick(kernel)),
             Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
             Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
+            Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
         }
     }
 }
@@ -158,6 +172,8 @@ pub enum State {
     IntSem(intsem::State),
     /// `StreamBufferInterrupt.c`.
     SbInt(sbint::State),
+    /// `TimerDemo.c`.
+    TimerDemo(timerdemo::State),
 }
 
 /// What every task body can reach: the scenario's statics, plus the two
@@ -188,6 +204,9 @@ impl Shared {
         if let (State::QOverwrite(s), TickIsr::QueueOverwrite(isr)) = (&mut self.state, isr) {
             return s.still_running(isr);
         }
+        if let (State::TimerDemo(s), TickIsr::TimerDemo(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr, Check::PERIOD);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -205,6 +224,8 @@ impl Shared {
             State::QSetPoll(s) => s.still_running(),
             State::IntSem(s) => s.still_running(),
             State::SbInt(s) => s.still_running(),
+            // Reached only when the hook is not the matching one.
+            State::TimerDemo(s) => s.still_running(timerdemo::Isr::default(), Check::PERIOD),
         }
     }
 }
@@ -247,6 +268,8 @@ pub enum Body {
     IntSem(intsem::Body),
     /// `StreamBufferInterrupt.c`'s one.
     SbInt(sbint::Body),
+    /// `TimerDemo.c`'s one.
+    TimerDemo(timerdemo::Body),
 }
 
 impl Body {
@@ -269,6 +292,7 @@ impl Body {
             Self::QSetPoll(b) => b.step(k, s),
             Self::IntSem(b) => b.step(k, s),
             Self::SbInt(b) => b.step(k, s),
+            Self::TimerDemo(b) => b.step(k, s),
         }
     }
 }
@@ -330,6 +354,12 @@ impl Timer {
                 self.pc = 2;
             }
             // xTimeNow = prvSampleTimeNow( &xTimerListsWereSwitched );
+            //
+            // The sample and the wait that uses it are one arm, not two.
+            // Neither the tick read nor the list walk takes a critical
+            // section, so no tick can land between them in the C — and a
+            // step boundary here would let one land in ours, which costs
+            // the wait a tick and moves every line after it.
             2 => {
                 let (now, switched) = k.timer_sample_time_now().unwrap_or((0, false));
                 self.now = now;
@@ -339,7 +369,12 @@ impl Timer {
                 } else if !self.list_was_empty && self.next_expire <= now {
                     self.pc = 3;
                 } else {
-                    self.pc = 5;
+                    if self.list_was_empty {
+                        self.list_was_empty = k.overflow_timer_list_is_empty();
+                    }
+                    let wait = self.next_expire.wrapping_sub(self.now);
+                    let _ = k.wait_for_message_restricted(s.timer_queue, wait, self.list_was_empty);
+                    self.pc = 6;
                 }
             }
             // ( void ) xTaskResumeAll(); prvProcessExpiredTimer( ... );
@@ -352,14 +387,6 @@ impl Timer {
                 self.pc = 8;
             }
             // The other arm: block on the queue until the head is due.
-            5 => {
-                if self.list_was_empty {
-                    self.list_was_empty = k.overflow_timer_list_is_empty();
-                }
-                let wait = self.next_expire.wrapping_sub(self.now);
-                let _ = k.wait_for_message_restricted(s.timer_queue, wait, self.list_was_empty);
-                self.pc = 6;
-            }
             6 => {
                 if !k.resume_all() {
                     k.task_yield();

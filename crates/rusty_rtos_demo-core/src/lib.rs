@@ -37,6 +37,7 @@
 //! | [`qsetpoll`] | `QueueSetPolling.c` | a queue set polled by a task, written by an interrupt |
 //! | [`intsem`] | `IntSemTest.c` | semaphores and a mutex given from an interrupt |
 //! | [`sbint`] | `StreamBufferInterrupt.c` | a string streamed from the tick, byte by byte |
+//! | [`timerdemo`] | `TimerDemo.c` | software timers, checked against the tick they fire on |
 //!
 //! The other eight scenarios of the K1 corpus follow the same shape and
 //! land as they are written; the plan's kill test is the whole nine.
@@ -55,6 +56,7 @@ pub mod recmutex;
 pub mod runner;
 pub mod sbint;
 pub mod semtest;
+pub mod timerdemo;
 pub mod trace;
 
 pub use runner::{Body, Runner, Shared, SimKernel, Step, Verdict};
@@ -116,6 +118,8 @@ pub enum Scenario {
     IntSem,
     /// `StreamBufferInterrupt.c`.
     SbInt,
+    /// `TimerDemo.c`.
+    TimerDemo,
 }
 
 impl Scenario {
@@ -136,6 +140,7 @@ impl Scenario {
             Self::QSetPoll => "QueueSetPolling",
             Self::IntSem => "IntSemTest",
             Self::SbInt => "StreamBufferInterrupt",
+            Self::TimerDemo => "TimerDemo",
         }
     }
 
@@ -156,6 +161,7 @@ impl Scenario {
             "QueueSetPolling" => Some(Self::QSetPoll),
             "IntSemTest" => Some(Self::IntSem),
             "StreamBufferInterrupt" => Some(Self::SbInt),
+            "TimerDemo" => Some(Self::TimerDemo),
             _ => None,
         }
     }
@@ -177,6 +183,7 @@ impl Scenario {
             Self::QSetPoll,
             Self::IntSem,
             Self::SbInt,
+            Self::TimerDemo,
         ]
     }
 }
