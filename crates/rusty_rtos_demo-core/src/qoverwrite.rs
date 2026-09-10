@@ -233,9 +233,9 @@ impl Body {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (isr_queue, task) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         // The queue the interrupt uses is created first, before the
         // scheduler; the task's own is created by the task.
         let isr_queue = k.queue_create(QUEUE_LENGTH)?;

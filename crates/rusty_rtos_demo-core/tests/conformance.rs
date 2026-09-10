@@ -17,10 +17,15 @@
 
 use core::fmt;
 
+use core::cell::RefCell;
+use core::pin::pin;
 use rusty_rtos_core::error::Result;
+
+use rusty_rtos_demo_core::runner::Shared;
 use rusty_rtos_demo_core::{
     Runner, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
-    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, step_limit_for, timerdemo,
+    pollq_async, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
+    step_limit_for, timerdemo,
 };
 
 /// How long every pinned run is. The check task ends the run at the first
@@ -264,9 +269,14 @@ impl fmt::Write for Digest {
 )]
 fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
     for pin in &PINS {
-        let mut runner = Runner::new(Digest::new()).expect("the sim geometry holds the scenario");
-        (pin.start)(&mut runner, PIN_TICKS).expect("the scenario starts");
-        let verdict = runner.run(step_limit_for(PIN_TICKS));
+        let kernel =
+            Runner::kernel_for(Digest::new()).expect("the sim geometry holds the scenario");
+        let shared = RefCell::new(Shared::default());
+        let verdict = {
+            let mut runner = Runner::new(&kernel, &shared);
+            (pin.start)(&mut runner, PIN_TICKS).expect("the scenario starts");
+            runner.run(step_limit_for(PIN_TICKS))
+        };
 
         assert!(
             !verdict.runaway,
@@ -287,7 +297,7 @@ fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
         );
         assert_eq!(verdict.lines, pin.lines, "{}: trace lines", pin.name);
 
-        let digest = runner.into_writer();
+        let digest = Runner::into_writer(kernel);
         assert_eq!(digest.bytes, pin.bytes, "{}: trace size in bytes", pin.name);
         assert_eq!(
             digest.hash,
@@ -301,24 +311,36 @@ fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
 
 /// The `async` arm reproduces `PollQ`'s trace exactly (mission plan, K2.2).
 ///
-/// It cannot go in [`PINS`] because it does not go through [`Runner`] — its
-/// task bodies are futures that borrow the kernel, so it owns one — but the
-/// claim is the same claim and the number is `PollQ`'s own: the same
-/// digest, the same bytes, the same exits. If an `.await` ever landed
-/// somewhere a `pc` arm did not, this is what would say so.
+/// It cannot go in [`PINS`] because its bodies are futures and the caller
+/// has to pin them, which is one line more than the table's `start` shape
+/// allows. Everything else is the same: the same [`Runner`], the same
+/// `step_once`, the same verdict — and the same numbers as `PollQ`, which
+/// is the claim. If an `.await` ever landed somewhere a `pc` arm did not,
+/// this is what would say so.
+///
+/// It pins with [`core::pin::pin!`] rather than `Box::pin`, which is the
+/// point of the mechanism: a future of unnameable type goes in a task slot
+/// with no allocator, no `unsafe` and nothing unstable.
 #[test]
 fn the_async_arm_reproduces_pollqs_trace_exactly() {
     let pollq = PINS
         .iter()
         .find(|p| p.name == "PollQ")
         .expect("PollQ is pinned");
-    let (verdict, digest) = rusty_rtos_demo_core::pollq_async::run(
-        Digest::new(),
-        PIN_TICKS,
-        step_limit_for(PIN_TICKS).saturating_mul(4),
-        false,
-    )
-    .expect("the async arm starts");
+
+    let kernel = Runner::kernel_for(Digest::new()).expect("the sim geometry holds");
+    let shared = RefCell::new(Shared::default());
+    let verdict = {
+        let (producer, consumer) =
+            pollq_async::tasks(&kernel, &shared).expect("the async arm starts");
+        let mut producer = pin!(producer);
+        let mut consumer = pin!(consumer);
+        let mut runner = Runner::new(&kernel, &shared);
+        pollq_async::start(&mut runner, PIN_TICKS, producer.as_mut(), consumer.as_mut())
+            .expect("the async arm starts");
+        runner.run(step_limit_for(PIN_TICKS).saturating_mul(4))
+    };
+    let digest = Runner::into_writer(kernel);
 
     assert!(verdict.pass, "the async arm failed its own check");
     assert!(!verdict.runaway, "the async arm did not finish");
@@ -332,7 +354,8 @@ fn the_async_arm_reproduces_pollqs_trace_exactly() {
     assert_eq!(digest.bytes, pollq.bytes, "trace size in bytes");
     assert_eq!(
         digest.hash, pollq.digest,
-        "the async arm's trace differs from PollQ's; an await point has          moved off a `pc` arm boundary"
+        "the async arm's trace differs from PollQ's; an await point has \
+         moved off a `pc` arm boundary"
     );
 }
 
@@ -346,10 +369,18 @@ fn every_scenario_is_deterministic() {
     let ticks: u64 = if cfg!(miri) { 20 } else { 500 };
     for pin in &PINS {
         let run = || {
-            let mut runner = Runner::new(Digest::new()).unwrap();
-            (pin.start)(&mut runner, ticks).unwrap();
-            let verdict = runner.run(step_limit_for(ticks));
-            (verdict.exits, verdict.lines, runner.into_writer().hash)
+            let kernel = Runner::kernel_for(Digest::new()).unwrap();
+            let shared = RefCell::new(Shared::default());
+            let verdict = {
+                let mut runner = Runner::new(&kernel, &shared);
+                (pin.start)(&mut runner, ticks).unwrap();
+                runner.run(step_limit_for(ticks))
+            };
+            (
+                verdict.exits,
+                verdict.lines,
+                Runner::into_writer(kernel).hash,
+            )
         };
         let (exits, lines, hash) = run();
         assert!(lines > 0, "{}: the scenario traced nothing", pin.name);

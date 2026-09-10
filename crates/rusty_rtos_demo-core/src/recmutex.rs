@@ -374,9 +374,9 @@ impl Polling {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (mutex, controlling, blocking, polling) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let mutex = k.mutex_create_recursive()?;
         let controlling = k.create_task("Rec1", CONTROLLING_PRIORITY)?;
         let blocking = k.create_task("Rec2", BLOCKING_PRIORITY)?;

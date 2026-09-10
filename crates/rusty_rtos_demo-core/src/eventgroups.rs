@@ -929,9 +929,9 @@ impl Sync {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (slave, master, sync1, sync2, isr_group) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let slave = k.create_task("WaitO", WAIT_BIT_TASK_PRIORITY)?;
         let master = k.create_task("SetB", SET_BIT_TASK_PRIORITY)?;
         let sync1 = k.create_task("Rndv", WAIT_BIT_TASK_PRIORITY)?;

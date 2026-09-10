@@ -201,14 +201,14 @@ impl Consumer {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     struct Made {
         task: rusty_rtos_core::handle::TaskHandle,
         body: Body,
     }
     let mut made: [Option<Made>; 6] = [None, None, None, None, None, None];
     {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
 
         // Set 1: a one-deep queue, blocking consumer at PRIORITY, polling
         // producer at idle priority.

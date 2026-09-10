@@ -18,12 +18,14 @@
 //! runs this against `kairos oracle cat <scenario>` and reports the first
 //! line that differs.
 
+use std::cell::RefCell;
 use std::env;
 use std::fmt;
 use std::io::{self, BufWriter, Write as _};
+use std::pin::pin;
 use std::process::ExitCode;
 
-use rusty_rtos_demo_core::runner::Runner;
+use rusty_rtos_demo_core::runner::{Runner, Shared};
 use rusty_rtos_demo_core::{
     Scenario, Step, Verdict, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem,
     mbamp, pollq, pollq_async, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
@@ -135,91 +137,91 @@ fn main() -> ExitCode {
         .unwrap_or(DEFAULT_MAX_TICKS);
 
     let debug_exits = env::var_os("KAIROS_TRACE_EXITS").is_some();
-
-    // The async arm builds its own kernel: its task bodies are futures that
-    // borrow it, so it cannot live inside a `Runner` that also owns them.
-    if scenario == Scenario::PollQAsync {
-        let sink = rusty_rtos_demo_core::LineTrace::new(Stderr::new())
-            .with_exit_column(debug_exits)
-            .into_writer();
-        let limit = step_limit_for(max_ticks).saturating_mul(4);
-        return match pollq_async::run(sink, max_ticks, limit, debug_exits) {
-            Ok((verdict, mut sink)) => {
-                use fmt::Write as _;
-                let outcome = if verdict.pass { "pass" } else { "fail" };
-                let _ = writeln!(
-                    sink,
-                    "KAIROS_RESULT {} {outcome} ticks={} yields={} exits={} lines={}",
-                    scenario.name(),
-                    verdict.ticks,
-                    verdict.yields,
-                    verdict.exits,
-                    verdict.lines
-                );
-                let _ = sink.flush();
-                if verdict.runaway {
-                    let mut err = io::stderr();
-                    let _ = writeln!(err, "the scenario did not finish within {limit} steps");
-                }
-                if verdict.pass {
-                    ExitCode::SUCCESS
-                } else {
-                    ExitCode::FAILURE
-                }
-            }
-            Err(e) => {
-                let mut err = io::stderr();
-                let _ = writeln!(err, "scenario {name} could not start: {e:?}");
-                ExitCode::from(3)
-            }
-        };
-    }
-
-    let mut runner = match Runner::with_sink(
-        rusty_rtos_demo_core::LineTrace::new(Stderr::new()).with_exit_column(debug_exits),
-    ) {
-        Ok(r) => r,
+    let sink = rusty_rtos_demo_core::LineTrace::new(Stderr::new()).with_exit_column(debug_exits);
+    let kernel = match Runner::kernel_with_sink(sink) {
+        Ok(k) => k,
         Err(e) => {
             let mut err = io::stderr();
             let _ = writeln!(err, "kernel refused the geometry: {e:?}");
             return ExitCode::from(3);
         }
     };
-    let started = match scenario {
-        Scenario::Dynamic => dynamic::start(&mut runner, max_ticks),
-        Scenario::PollQ => pollq::start(&mut runner, max_ticks),
-        Scenario::BlockQ => blockq::start(&mut runner, max_ticks),
-        Scenario::SemTest => semtest::start(&mut runner, max_ticks),
-        Scenario::CountSem => countsem::start(&mut runner, max_ticks),
-        Scenario::RecMutex => recmutex::start(&mut runner, max_ticks),
-        Scenario::BlockTim => blocktim::start(&mut runner, max_ticks),
-        Scenario::QPeek => qpeek::start(&mut runner, max_ticks),
-        Scenario::GenQTest => genqtest::start(&mut runner, max_ticks),
-        Scenario::QOverwrite => qoverwrite::start(&mut runner, max_ticks),
-        Scenario::QSetPoll => qsetpoll::start(&mut runner, max_ticks),
-        Scenario::IntSem => intsem::start(&mut runner, max_ticks),
-        Scenario::SbInt => sbint::start(&mut runner, max_ticks),
-        Scenario::TimerDemo => timerdemo::start(&mut runner, max_ticks),
-        Scenario::EventGroups => eventgroups::start(&mut runner, max_ticks),
-        Scenario::MbAmp => mbamp::start(&mut runner, max_ticks),
-        Scenario::PollQTyped => pollq_typed::start(&mut runner, max_ticks),
-        // Handled above: it owns its own kernel.
-        Scenario::PollQAsync => Ok(()),
-    };
-    if let Err(e) = started {
-        let mut err = io::stderr();
-        let _ = writeln!(err, "scenario {name} could not start: {e:?}");
-        return ExitCode::from(3);
-    }
-
+    let shared = RefCell::new(Shared::default());
     let limit = step_limit_for(max_ticks);
-    let verdict = if env::var_os("KAIROS_SIM_EXITS").is_some() {
-        run_stepping(&mut runner, limit)
+
+    // The runner borrows the kernel and the statics, and an `async` body's
+    // future borrows them too — so everything with a lifetime lives in this
+    // block and the writer is taken once it has ended.
+    // The runner borrows the kernel and the statics, and an `async` body's
+    // future borrows them too — so everything with a lifetime lives inside
+    // this block, and the writer is taken once it has ended.
+    let verdict = if scenario == Scenario::PollQAsync {
+        // A future has no nameable type, so it cannot be a field: the
+        // caller pins it and lends it. `pin!`, not `Box::pin` — the whole
+        // point is that a task slot needs no allocator.
+        let (producer, consumer) = match pollq_async::tasks(&kernel, &shared) {
+            Ok(pair) => pair,
+            Err(e) => {
+                let mut err = io::stderr();
+                let _ = writeln!(err, "scenario {name} could not start: {e:?}");
+                return ExitCode::from(3);
+            }
+        };
+        let mut producer = pin!(producer);
+        let mut consumer = pin!(consumer);
+        let mut runner = Runner::new(&kernel, &shared);
+        if let Err(e) =
+            pollq_async::start(&mut runner, max_ticks, producer.as_mut(), consumer.as_mut())
+        {
+            let mut err = io::stderr();
+            let _ = writeln!(err, "scenario {name} could not start: {e:?}");
+            return ExitCode::from(3);
+        }
+        let verdict = if env::var_os("KAIROS_SIM_EXITS").is_some() {
+            run_stepping(&mut runner, limit)
+        } else {
+            runner.run(limit)
+        };
+        let _ = runner.finish(scenario.name(), &verdict);
+        verdict
     } else {
-        runner.run(limit)
+        let mut runner = Runner::new(&kernel, &shared);
+        let started = match scenario {
+            Scenario::Dynamic => dynamic::start(&mut runner, max_ticks),
+            Scenario::PollQ => pollq::start(&mut runner, max_ticks),
+            Scenario::BlockQ => blockq::start(&mut runner, max_ticks),
+            Scenario::SemTest => semtest::start(&mut runner, max_ticks),
+            Scenario::CountSem => countsem::start(&mut runner, max_ticks),
+            Scenario::RecMutex => recmutex::start(&mut runner, max_ticks),
+            Scenario::BlockTim => blocktim::start(&mut runner, max_ticks),
+            Scenario::QPeek => qpeek::start(&mut runner, max_ticks),
+            Scenario::GenQTest => genqtest::start(&mut runner, max_ticks),
+            Scenario::QOverwrite => qoverwrite::start(&mut runner, max_ticks),
+            Scenario::QSetPoll => qsetpoll::start(&mut runner, max_ticks),
+            Scenario::IntSem => intsem::start(&mut runner, max_ticks),
+            Scenario::SbInt => sbint::start(&mut runner, max_ticks),
+            Scenario::TimerDemo => timerdemo::start(&mut runner, max_ticks),
+            Scenario::EventGroups => eventgroups::start(&mut runner, max_ticks),
+            Scenario::MbAmp => mbamp::start(&mut runner, max_ticks),
+            Scenario::PollQTyped => pollq_typed::start(&mut runner, max_ticks),
+            // Handled above: its bodies are futures the caller pins.
+            Scenario::PollQAsync => Ok(()),
+        };
+        if let Err(e) = started {
+            let mut err = io::stderr();
+            let _ = writeln!(err, "scenario {name} could not start: {e:?}");
+            return ExitCode::from(3);
+        }
+        let verdict = if env::var_os("KAIROS_SIM_EXITS").is_some() {
+            run_stepping(&mut runner, limit)
+        } else {
+            runner.run(limit)
+        };
+        let _ = runner.finish(scenario.name(), &verdict);
+        verdict
     };
-    let _ = runner.finish(scenario.name(), &verdict);
-    let mut sink = runner.into_writer();
+
+    let mut sink = Runner::<Stderr>::into_writer(kernel);
     let _ = sink.flush();
 
     if verdict.runaway {

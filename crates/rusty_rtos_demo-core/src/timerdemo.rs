@@ -796,11 +796,11 @@ impl Body {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let mut isr = Isr::default();
     let task;
     {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         for index in 0..TIMER_QUEUE_LENGTH {
             let period = ((index as u64).saturating_add(1)).saturating_mul(BASE_PERIOD);
             match k.timer_create("FR Timer", period, true, index as u64, CB_AUTO_RELOAD) {

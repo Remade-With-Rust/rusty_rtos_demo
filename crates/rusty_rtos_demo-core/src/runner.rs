@@ -24,6 +24,11 @@
 use core::array;
 use core::fmt;
 
+use core::cell::{RefCell, RefMut};
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll, Waker};
+
 use rusty_rtos_core::config::{Config, PosixDemoConfig};
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
@@ -277,8 +282,22 @@ impl Shared {
 
 /// One task body. An enum rather than a `dyn` object so the runner needs no
 /// allocator and a firmware can hold the whole corpus in `.bss`.
-#[derive(Debug, Clone, Copy)]
-pub enum Body {
+/// It is not `Copy`, and cannot be: [`Body::Async`] holds a pinned
+/// borrow of a future, and a future is exactly the thing that must not be
+/// duplicated. Nothing needed it to be.
+pub enum Body<'a> {
+    /// A task body written as an `async fn` (mission plan, K2.2).
+    ///
+    /// The future is pinned by the caller and lent to the runner, because
+    /// an `async fn`'s type is anonymous and cannot be named as a field.
+    /// It reaches the kernel through the same [`RefCell`] the runner holds,
+    /// which is why the kernel is not the runner's to own.
+    ///
+    /// One poll is one step, for the reason [`crate::pollq_async`] sets out
+    /// at length: an `.await` has to be worth exactly one arm of a `pc`
+    /// machine, so every kernel call yields after it, not only the ones
+    /// that block.
+    Async(Pin<&'a mut dyn Future<Output = ()>>),
     /// No body attached — reaching one is a runner bug, not a scenario's.
     Empty,
     /// `prvIdleTask`.
@@ -329,10 +348,47 @@ pub enum Body {
     PollQTyped(pollq_typed::Body),
 }
 
-impl Body {
+impl fmt::Debug for Body<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A future has no `Debug`, so the variant name is the whole of it.
+        f.write_str(match self {
+            Self::Empty => "Empty",
+            Self::Async(_) => "Async",
+            Self::Idle(_) => "Idle",
+            Self::Timer(_) => "Timer",
+            Self::Check(_) => "Check",
+            _ => "Body",
+        })
+    }
+}
+
+impl Body<'_> {
+    /// Poll an `async` body once. Kept apart from [`Body::step`] because it
+    /// must *not* be handed the kernel: the future borrows the same
+    /// `RefCell`, and holding a borrow across the poll would be a
+    /// double-borrow at the first kernel call it makes.
+    fn poll_once(&mut self) -> Step {
+        match self {
+            Self::Async(future) => {
+                let waker = Waker::noop();
+                let mut cx = Context::from_waker(waker);
+                match future.as_mut().poll(&mut cx) {
+                    Poll::Pending => Step::Continue,
+                    // A task body is an infinite loop in the C and must be
+                    // one here; returning is the scenario's bug.
+                    Poll::Ready(()) => Step::Finish(false),
+                }
+            }
+            _ => Step::Finish(false),
+        }
+    }
+
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self {
             Self::Empty => Step::Finish(false),
+            // Reached only through `poll_once`, which the runner calls
+            // instead of this when it sees one.
+            Self::Async(_) => Step::Finish(false),
             Self::Idle(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),
@@ -530,48 +586,67 @@ pub struct Verdict {
 }
 
 /// The runner: a kernel, one body per task, and the scenario's statics.
-pub struct Runner<W: fmt::Write> {
-    kernel: SimKernel<W>,
-    bodies: [Body; TASKS],
-    shared: Shared,
+pub struct Runner<'a, W: fmt::Write> {
+    kernel: &'a RefCell<SimKernel<W>>,
+    bodies: [Body<'a>; TASKS],
+    /// Borrowed for the same reason the kernel is: an `async` body reaches
+    /// the scenario's statics, and cannot reach a field of the struct that
+    /// polls it. `PollQ`'s counters are the case that forces it — the
+    /// tasks write them and the check task reads them.
+    shared: &'a RefCell<Shared>,
 }
 
-impl<W: fmt::Write> Runner<W> {
+impl<'a, W: fmt::Write> Runner<'a, W> {
     /// A runner with no tasks yet.
     ///
     /// # Errors
     /// As [`Kernel::new`]: an invalid configuration or a geometry that does
     /// not add up.
-    pub fn new(out: W) -> Result<Self> {
-        Self::with_sink(LineTrace::new(out))
+    pub fn kernel_for(out: W) -> Result<RefCell<SimKernel<W>>> {
+        Self::kernel_with_sink(LineTrace::new(out))
     }
 
-    /// A runner over a sink the caller configured — a conformance session
-    /// turns on the exit column.
+    /// The kernel a runner will borrow, over a sink the caller configured.
+    ///
+    /// It is the caller's and not the runner's because an `async` body is a
+    /// future that borrows it, and a future cannot borrow a field of the
+    /// struct that polls it.
     ///
     /// # Errors
     /// As [`Kernel::new`].
-    pub fn with_sink(sink: LineTrace<W>) -> Result<Self> {
-        Ok(Self {
-            kernel: Kernel::new(SimPort::new(), sink)?,
+    pub fn kernel_with_sink(sink: LineTrace<W>) -> Result<RefCell<SimKernel<W>>> {
+        Ok(RefCell::new(Kernel::new(SimPort::new(), sink)?))
+    }
+
+    /// A runner over a kernel and a set of statics the caller is holding.
+    #[must_use]
+    pub fn new(kernel: &'a RefCell<SimKernel<W>>, shared: &'a RefCell<Shared>) -> Self {
+        Self {
+            kernel,
             bodies: array::from_fn(|_| Body::Empty),
-            shared: Shared::default(),
-        })
+            shared,
+        }
     }
 
     /// The kernel, for a scenario that is building itself.
-    pub const fn kernel_mut(&mut self) -> &mut SimKernel<W> {
-        &mut self.kernel
+    ///
+    /// A guard rather than a reference now that the kernel is shared: hold
+    /// it for the length of the setup and let it go before running.
+    #[must_use]
+    pub fn kernel_mut(&mut self) -> RefMut<'_, SimKernel<W>> {
+        self.kernel.borrow_mut()
     }
 
     /// The scenario's shared state.
-    pub const fn shared_mut(&mut self) -> &mut Shared {
-        &mut self.shared
+    #[must_use]
+    pub fn shared_mut(&mut self) -> RefMut<'_, Shared> {
+        self.shared.borrow_mut()
     }
 
     /// The kernel, read-only — what a stepper reports between steps.
-    pub const fn kernel(&self) -> &SimKernel<W> {
-        &self.kernel
+    #[must_use]
+    pub fn kernel(&self) -> core::cell::Ref<'_, SimKernel<W>> {
+        self.kernel.borrow()
     }
 
     /// Attach a body to a task.
@@ -579,7 +654,7 @@ impl<W: fmt::Write> Runner<W> {
     /// A handle outside the runner's table is ignored rather than
     /// panicking; the run then ends at [`Body::Empty`] with a failed
     /// verdict, which is visible where a panic would not be.
-    pub fn attach(&mut self, task: TaskHandle, body: Body) {
+    pub fn attach(&mut self, task: TaskHandle, body: Body<'a>) {
         if let Some(slot) = self.bodies.get_mut(usize::from(task.index())) {
             *slot = body;
         }
@@ -593,10 +668,17 @@ impl<W: fmt::Write> Runner<W> {
     /// # Errors
     /// As the kernel's create calls.
     pub fn start_common(&mut self, max_ticks: u64) -> Result<()> {
-        let check = self.kernel.create_task("CHECK", Check::PRIORITY)?;
-        let started = self.kernel.start_scheduler()?;
-        self.shared.max_ticks = max_ticks;
-        self.shared.timer_queue = started.timer_queue;
+        let (check, started) = {
+            let mut k = self.kernel.borrow_mut();
+            let check = k.create_task("CHECK", Check::PRIORITY)?;
+            let started = k.start_scheduler()?;
+            (check, started)
+        };
+        {
+            let mut shared = self.shared.borrow_mut();
+            shared.max_ticks = max_ticks;
+            shared.timer_queue = started.timer_queue;
+        }
         self.attach(check, Body::Check(Check::default()));
         self.attach(started.idle, Body::Idle(Idle::default()));
         self.attach(started.timer, Body::Timer(Timer::default()));
@@ -618,33 +700,44 @@ impl<W: fmt::Write> Runner<W> {
             bodies,
             shared,
         } = self;
-        if kernel.resume_pending() {
+        if kernel.borrow_mut().resume_pending() {
             return Step::Continue;
         }
-        let index = usize::from(kernel.current().index());
-        match bodies.get_mut(index) {
-            Some(body) => body.step(kernel, shared),
-            None => Step::Finish(false),
+        let index = usize::from(kernel.borrow().current().index());
+        let Some(body) = bodies.get_mut(index) else {
+            return Step::Finish(false);
+        };
+        // An `async` body reaches the kernel through the same cell, so it
+        // must be polled with no borrow outstanding.
+        if matches!(body, Body::Async(_)) {
+            return body.poll_once();
         }
+        let mut k = kernel.borrow_mut();
+        let mut s = shared.borrow_mut();
+        body.step(&mut k, &mut s)
     }
 
     /// The verdict for a run driven by [`Runner::step_once`].
     #[must_use]
     pub fn verdict(&self, steps: u64, pass: bool, runaway: bool) -> Verdict {
+        let k = self.kernel.borrow();
         Verdict {
-            pass: pass && !runaway && !self.kernel.trace().failed(),
-            ticks: self.kernel.tick_count(),
-            yields: self.kernel.port().yields(),
-            exits: self.kernel.port().exits(),
-            lines: self.kernel.trace().lines(),
+            pass: pass && !runaway && !k.trace().failed(),
+            ticks: k.tick_count(),
+            yields: k.port().yields(),
+            exits: k.port().exits(),
+            lines: k.trace().lines(),
             steps,
             runaway,
         }
     }
 
     /// The sink's writer, so a deliverable can flush it once at the end.
-    pub fn into_writer(self) -> W {
-        self.kernel.into_trace().into_writer()
+    ///
+    /// Takes the kernel rather than the runner, because the runner only
+    /// ever borrowed it: drop the runner, then call this.
+    pub fn into_writer(kernel: RefCell<SimKernel<W>>) -> W {
+        kernel.into_inner().into_trace().into_writer()
     }
 
     /// Run until a body finishes the scenario or the step limit is hit.
@@ -686,7 +779,7 @@ impl<W: fmt::Write> Runner<W> {
             ..
         } = *verdict;
         writeln!(
-            self.kernel.trace_mut().writer_mut(),
+            self.kernel.borrow_mut().trace_mut().writer_mut(),
             "KAIROS_RESULT {scenario} {outcome} ticks={ticks} yields={yields} exits={exits} lines={lines}"
         )
     }

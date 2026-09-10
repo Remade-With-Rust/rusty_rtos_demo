@@ -476,9 +476,9 @@ impl Highest {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (queue, low, medium, high, highest) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let queue = k.queue_create(QUEUE_LENGTH)?;
         let low = k.create_task("PeekL", LOW_PRIORITY)?;
         let medium = k.create_task("PeekM", MEDIUM_PRIORITY)?;

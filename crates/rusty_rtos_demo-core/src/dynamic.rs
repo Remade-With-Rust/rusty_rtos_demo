@@ -448,9 +448,9 @@ impl SuspRx {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (queue, cnt_inc, lim_inc, c_ctrl, susp_tx, susp_rx) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let queue = k.queue_create(QUEUE_LENGTH)?;
         let cnt_inc = k.create_task("CNT_INC", 0)?;
         let lim_inc = k.create_task("LIM_INC", 1)?;

@@ -492,9 +492,9 @@ impl Counting {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (isr_mutex, isr_counting, master_slave_mutex, slave, master, counting) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let isr_mutex = k.mutex_create()?;
         let isr_counting = k.semaphore_create_counting(MAX_COUNT, 0)?;
         let master_slave_mutex = k.mutex_create()?;

@@ -192,9 +192,9 @@ impl Body {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let (buffer, task) = {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         let buffer = k.stream_buffer_create(BUFFER_BYTES, TRIGGER_LEVEL)?;
         let task = k.create_task("StrIntRx", PRIORITY)?;
         (buffer, task)

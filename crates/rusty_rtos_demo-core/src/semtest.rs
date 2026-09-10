@@ -176,11 +176,11 @@ impl Body {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let mut made: [Option<(rusty_rtos_core::handle::TaskHandle, Body)>; 4] =
         [None, None, None, None];
     {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
 
         // The first semaphore: created empty, then given once so the first
         // taker succeeds. Its two tasks poll with no block time.

@@ -380,7 +380,7 @@ fn decimal(value: u32, out: &mut [u8; 15]) -> usize {
 ///
 /// # Errors
 /// As the kernel's create calls.
-pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()> {
+pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Result<()> {
     let mut state = State {
         status_ok: true,
         ..State::default()
@@ -389,7 +389,7 @@ pub fn start<W: fmt::Write>(runner: &mut Runner<W>, max_ticks: u64) -> Result<()
     let core_a;
     let mut core_b_tasks = [rusty_rtos_core::handle::TaskHandle::NULL; CORE_B_TASKS];
     {
-        let k = runner.kernel_mut();
+        let mut k = runner.kernel_mut();
         control = k.message_buffer_create(CONTROL_MESSAGE_BUFFER_SIZE)?;
         core_a = k.create_task("AMPCoreA", 0)?;
         for index in 0..CORE_B_TASKS {

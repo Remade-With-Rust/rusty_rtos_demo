@@ -43,6 +43,21 @@
 //! the scheduler's business, not the compiler's, and getting it from the
 //! kernel's blocking behaviour is precisely wrong.
 //!
+//! # Where the future lives
+//!
+//! An `async fn`'s type has no name, so the runner cannot hold one as a
+//! field. It does not have to: [`Body::Async`] holds a
+//! `Pin<&mut dyn Future>`, the caller pins the future as a local and lends
+//! it, and the runner polls it like any other body. No allocator, no
+//! `unsafe`, no unstable feature — `core::pin::pin!` and an unsized coercion.
+//!
+//! The one thing it forces is that the **kernel is the caller's, not the
+//! runner's**: a future borrows the kernel to make its calls, and a future
+//! that borrowed a field of the struct polling it would be
+//! self-referential. So both borrow a `RefCell` that outlives them. The
+//! borrow can never conflict — the runner polls exactly one body at a time,
+//! and it takes care to hold no borrow of its own while it does.
+//!
 //! # What that buys, and what it costs
 //!
 //! It buys the thing K2 paid for six times: the locals live across the
@@ -56,11 +71,10 @@
 //! counter roughly doubles and nothing else moves.
 
 use core::cell::RefCell;
-use core::future::{Future, poll_fn};
-use core::pin::pin;
-use core::task::{Context, Poll, Waker};
-
 use core::fmt;
+use core::future::{Future, poll_fn};
+use core::pin::Pin;
+use core::task::Poll;
 
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::QueueHandle;
@@ -69,7 +83,7 @@ use rusty_rtos_kernel::queue::Wait;
 use crate::pollq::{
     CONSUMER_DELAY, NO_DELAY, PRIORITY, PRODUCER_DELAY, QUEUE_SIZE, State, VALUES_TO_PRODUCE,
 };
-use crate::runner::{self, Body, Check, Idle, Shared, SimKernel, Step, Timer, Verdict};
+use crate::runner::{self, Body, Runner, Shared, SimKernel};
 
 // The kernel is reachable from a task body that also has to survive an
 // `.await`. A future cannot hold `&mut SimKernel` across a suspension and
@@ -163,13 +177,12 @@ fn delay<'a, W: fmt::Write>(
 /// a tick, and nothing may run after it in this frame.
 fn count<'a, W: fmt::Write>(
     kernel: &'a RefCell<SimKernel<W>>,
-    state: &'a RefCell<State>,
+    shared: &'a RefCell<Shared>,
     producer: bool,
 ) -> impl Future<Output = ()> + 'a {
     step_call(kernel, move |k| {
         k.enter_critical();
-        {
-            let mut s = state.borrow_mut();
+        if let runner::State::PollQ(s) = &mut shared.borrow_mut().state {
             if producer {
                 s.producer_count = s.producer_count.wrapping_add(1);
             } else {
@@ -188,7 +201,7 @@ fn count<'a, W: fmt::Write>(
 /// keeps them across the suspensions, which is the whole point.
 async fn producer<W: fmt::Write>(
     kernel: &RefCell<SimKernel<W>>,
-    state: &RefCell<State>,
+    shared: &RefCell<Shared>,
     queue: QueueHandle,
 ) {
     let mut value: u16 = 0;
@@ -197,7 +210,7 @@ async fn producer<W: fmt::Write>(
         for _ in 0..VALUES_TO_PRODUCE {
             if send(kernel, queue, value).await {
                 if !error {
-                    count(kernel, state, true).await;
+                    count(kernel, shared, true).await;
                 }
                 value = value.wrapping_add(1);
             } else {
@@ -211,7 +224,7 @@ async fn producer<W: fmt::Write>(
 /// `vPolledQueueConsumer`.
 async fn consumer<W: fmt::Write>(
     kernel: &RefCell<SimKernel<W>>,
-    state: &RefCell<State>,
+    shared: &RefCell<Shared>,
     queue: QueueHandle,
 ) {
     let mut expected: u16 = 0;
@@ -224,7 +237,7 @@ async fn consumer<W: fmt::Write>(
             if let Some(data) = receive(kernel, queue).await {
                 if data == expected {
                     if !error {
-                        count(kernel, state, false).await;
+                        count(kernel, shared, false).await;
                     }
                 } else {
                     error = true;
@@ -237,132 +250,65 @@ async fn consumer<W: fmt::Write>(
     }
 }
 
-/// Run the scenario, and answer the same [`Verdict`] the runner would.
+/// The two futures, for a caller that will pin them.
 ///
-/// This is [`crate::runner::Runner::run`]'s loop with one change: when the
-/// current task is one of the two async ones it is *polled* rather than
-/// stepped. Everything else — the harness's `CHECK`, the idle task and the
-/// timer daemon — is the runner's own body, unchanged, so that any
-/// difference in the trace is the async bodies' and nothing else's.
+/// An `async fn`'s type has no name, so the runner cannot hold one as a
+/// field and the caller has to own it. This is the whole of the storage
+/// question K2.2 left open, and the answer is one line at the call site:
+/// pin them, then lend them.
+///
+/// ```ignore
+/// let kernel = Runner::kernel_for(sink)?;
+/// let (producer, consumer) = pollq_async::tasks(&kernel, &shared)?;
+/// let mut producer = core::pin::pin!(producer);
+/// let mut consumer = core::pin::pin!(consumer);
+/// let mut runner = Runner::new(&kernel, &shared);
+/// pollq_async::start(&mut runner, max_ticks, producer.as_mut(), consumer.as_mut())?;
+/// ```
+///
+/// The futures borrow the kernel, which is why the kernel is the caller's
+/// and not the runner's: a future that borrowed a field of the struct
+/// polling it would be self-referential and cannot be written.
 ///
 /// # Errors
 /// As the kernel's create calls.
-#[allow(
-    clippy::too_many_lines,
-    reason = "the driver is one loop and its setup"
-)]
-pub fn run<W: fmt::Write>(
-    sink: W,
-    max_ticks: u64,
-    step_limit: u64,
-    exit_column: bool,
-) -> Result<(Verdict, W)> {
-    let mut kernel = SimKernel::new(
-        rusty_rtos_port::sim::SimPort::default(),
-        crate::trace::LineTrace::new(sink).with_exit_column(exit_column),
-    )?;
-
+pub fn tasks<W: fmt::Write>(
+    kernel: &RefCell<SimKernel<W>>,
+    shared: &RefCell<Shared>,
+) -> Result<(impl Future<Output = ()>, impl Future<Output = ()>)> {
     // `vStartPolledQueueTasks`, in the C's order.
-    let queue = kernel.queue_create(QUEUE_SIZE)?;
-    let consumer_task = kernel.create_task("QConsNB", PRIORITY)?;
-    let producer_task = kernel.create_task("QProdNB", PRIORITY)?;
-
-    // `start_common`: the harness's check task, then the scheduler.
-    let check_task = kernel.create_task("CHECK", Check::PRIORITY)?;
-    let started = kernel.start_scheduler()?;
-
-    let mut shared = Shared {
-        max_ticks,
-        timer_queue: started.timer_queue,
-        state: runner::State::PollQ(State {
-            queue,
-            ..State::default()
-        }),
-    };
-    let mut bodies: [Body; crate::runner::TASKS] = [Body::Empty; crate::runner::TASKS];
-    if let Some(slot) = bodies.get_mut(usize::from(check_task.index())) {
-        *slot = Body::Check(Check::default());
-    }
-    if let Some(slot) = bodies.get_mut(usize::from(started.idle.index())) {
-        *slot = Body::Idle(Idle::default());
-    }
-    if let Some(slot) = bodies.get_mut(usize::from(started.timer.index())) {
-        *slot = Body::Timer(Timer::default());
-    }
-
-    let state = RefCell::new(State {
+    let queue = kernel.borrow_mut().queue_create(QUEUE_SIZE)?;
+    shared.borrow_mut().state = runner::State::PollQ(State {
         queue,
         ..State::default()
     });
-    let kernel = RefCell::new(kernel);
+    Ok((
+        producer(kernel, shared, queue),
+        consumer(kernel, shared, queue),
+    ))
+}
 
-    // The futures borrow the kernel, so the verdict has to be taken while
-    // they are still alive and the block has to end before the kernel can
-    // be moved out for its writer.
-    let verdict = {
-        let mut producer_future = pin!(producer(&kernel, &state, queue));
-        let mut consumer_future = pin!(consumer(&kernel, &state, queue));
-        let waker = Waker::noop();
-        let mut cx = Context::from_waker(waker);
-
-        let mut steps: u64 = 0;
-        let mut pass = false;
-        let mut runaway = false;
-        loop {
-            if steps >= step_limit {
-                runaway = true;
-                break;
-            }
-            steps = steps.wrapping_add(1);
-
-            // `Runner::step_once`, up to the point where it picks a body.
-            let current = {
-                let mut k = kernel.borrow_mut();
-                if k.resume_pending() {
-                    continue;
-                }
-                k.current()
-            };
-
-            if current == producer_task {
-                let _ = producer_future.as_mut().poll(&mut cx);
-            } else if current == consumer_task {
-                let _ = consumer_future.as_mut().poll(&mut cx);
-            } else {
-                // The harness's own tasks, through the runner's bodies. They
-                // read the scenario's statics from `Shared`, so keep the two
-                // copies of the counters in step for the check task.
-                if let runner::State::PollQ(s) = &mut shared.state {
-                    *s = *state.borrow();
-                }
-                let step = match bodies.get_mut(usize::from(current.index())) {
-                    Some(body) => body.step(&mut kernel.borrow_mut(), &mut shared),
-                    None => Step::Finish(false),
-                };
-                if let runner::State::PollQ(s) = &shared.state {
-                    *state.borrow_mut() = *s;
-                }
-                if let Step::Finish(verdict) = step {
-                    pass = verdict;
-                    break;
-                }
-            }
-        }
-
-        let k = kernel.borrow();
-        Verdict {
-            pass: pass && !runaway && !k.trace().failed(),
-            ticks: k.tick_count(),
-            yields: k.port().yields(),
-            exits: k.port().exits(),
-            lines: k.trace().lines(),
-            steps,
-            runaway,
-        }
+/// `vStartPolledQueueTasks`, with the bodies already built.
+///
+/// The tasks are created in the C's order — the consumer first — because
+/// the order is in the trace.
+///
+/// # Errors
+/// As the kernel's create calls.
+pub fn start<'a, W: fmt::Write>(
+    runner: &mut Runner<'a, W>,
+    max_ticks: u64,
+    producer: Pin<&'a mut dyn Future<Output = ()>>,
+    consumer: Pin<&'a mut dyn Future<Output = ()>>,
+) -> Result<()> {
+    let (consumer_task, producer_task) = {
+        let mut k = runner.kernel_mut();
+        let consumer_task = k.create_task("QConsNB", PRIORITY)?;
+        let producer_task = k.create_task("QProdNB", PRIORITY)?;
+        (consumer_task, producer_task)
     };
-
-    // The verdict *line* is the caller's, as it is for the runner: the
-    // offline pin digests the trace without it.
-    let k = kernel.into_inner();
-    Ok((verdict, k.into_trace().into_writer()))
+    runner.start_common(max_ticks)?;
+    runner.attach(consumer_task, Body::Async(consumer));
+    runner.attach(producer_task, Body::Async(producer));
+    Ok(())
 }
