@@ -219,4 +219,8 @@ pub mod prelude {
     pub use crate::runner::{Body, Runner, Shared, SimKernel, Step, Verdict};
     pub use crate::trace::LineTrace;
     pub use crate::{DEFAULT_STEP_LIMIT, Scenario};
+    // Every scenario's `start` answers this, so a firmware that holds them
+    // in a table has to be able to name it without depending on
+    // `rusty_rtos_core` itself.
+    pub use rusty_rtos_core::error::{Error, Result};
 }

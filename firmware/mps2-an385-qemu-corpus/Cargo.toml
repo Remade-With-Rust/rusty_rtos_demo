@@ -1,0 +1,29 @@
+# A firmware example: its own cargo project and its own workspace, because
+# the parent excludes `firmware/*`.
+[package]
+name = "mps2-an385-qemu-corpus"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# By path, as firmware/README.md requires for this repo's own crates. No
+# default features: `no_std`, and no allocator at all. The demo's task
+# model is a state machine, so a scenario needs no per-task stack and no
+# heap -- which is why the corpus can run on a chip before the family has
+# a context-switching port.
+rusty_rtos_demo-core = { path = "../../crates/rusty_rtos_demo-core", default-features = false }
+
+cortex-m-rt = "0.7"
+cortex-m-semihosting = "0.5"
+panic-semihosting = "0.6"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+
+[workspace]
