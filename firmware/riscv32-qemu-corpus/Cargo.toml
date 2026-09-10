@@ -7,6 +7,12 @@ edition = "2021"
 publish = false
 license = "MIT OR Apache-2.0"
 
+[features]
+# K3's one-hour clause on this architecture. Off by default because it is
+# roughly three hours under QEMU, and because the gate's plain
+# `cargo run --release` must keep meaning the 2000-tick conformance run.
+soak = []
+
 [dependencies]
 # By path, as firmware/README.md requires for this repo's own crates. No
 # default features: `no_std`, and no allocator at all. Identical to the

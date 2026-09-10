@@ -77,3 +77,31 @@ all read them. They used to be three hand-written copies of seventeen rows
 of hex, which is a drift waiting to happen: a cell that silently disagrees
 with the host is worse than no cell, because it reports PASS against
 numbers nobody is comparing. A pin that moves, moves once.
+
+## The one-hour soak
+
+```sh
+cargo run --release --features soak     # ~3 hours under QEMU
+```
+
+K3 asks that the corpus survive **one hour**. The sim runs
+`PosixDemoConfig`, whose `TICK_RATE_HZ` is 1000 — the same value as the
+oracle's `FreeRTOSConfig.h` — so one tick is one millisecond and an hour is
+**3,600,000 ticks**, not a round number chosen to be quick.
+
+It is a **feature and not a second binary** because `kairos check --qemu`
+runs a plain `cargo run --release` here, and a second bin target would make
+that ambiguous. The gate's invocation is untouched.
+
+What it checks changes with the length, and says so: at 2000 ticks every
+counter and the trace digest are compared against the C kernel's, because
+that is where the C trace exists. At an hour there is no C pin — getting
+one means an hour-long instrumented C run per scenario — so the check
+becomes the one the C demo itself makes: is every scenario's check task
+still reporting that it is running? Plus `ticks >= 3,600,000`, without
+which a scenario that stopped at tick 5 would report PASS having never been
+asked to survive anything. **Liveness, not conformance**, and it prints
+that word.
+
+The host runs the same hour in ~2 minutes:
+`kairos check rusty_rtos_demo --soak`.

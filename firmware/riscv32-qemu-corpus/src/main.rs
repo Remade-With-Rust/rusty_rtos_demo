@@ -50,7 +50,20 @@ use panic_halt as _;
 // the other architecture.
 use riscv as _;
 
-use rusty_rtos_demo_core::pins::{Digest, PIN_TICKS, pins};
+use rusty_rtos_demo_core::pins::{Digest, pins};
+
+/// How long each scenario runs, and therefore what is checked.
+///
+/// The default is the pinned 2000 ticks, where the C kernel's trace exists
+/// and every counter and the digest are compared against it. `--features
+/// soak` runs an hour of simulated time instead — 3,600,000 ticks at the
+/// oracle's own `TICK_RATE_HZ` of 1000 — where no C pin exists, so the
+/// check becomes the one the C demo itself makes: is every scenario's own
+/// check task still reporting that it is running?
+#[cfg(not(feature = "soak"))]
+const RUN_TICKS: u64 = rusty_rtos_demo_core::pins::PIN_TICKS;
+#[cfg(feature = "soak")]
+const RUN_TICKS: u64 = 3_600_000;
 use rusty_rtos_demo_core::runner::{Runner, Shared};
 use rusty_rtos_demo_core::step_limit_for;
 
@@ -78,15 +91,21 @@ fn main() -> ! {
         let shared = core::cell::RefCell::new(Shared::default());
         let verdict = {
             let mut runner = Runner::new(&kernel, &shared);
-            if (pin.start)(&mut runner, PIN_TICKS).is_err() {
+            if (pin.start)(&mut runner, RUN_TICKS).is_err() {
                 hprintln!("{:<22} FAIL  the scenario would not start", pin.name);
                 failed += 1;
                 continue;
             }
-            runner.run(step_limit_for(PIN_TICKS))
+            runner.run(step_limit_for(RUN_TICKS))
         };
         let d = Runner::into_writer(kernel);
 
+        // At the pinned length every counter and the digest are compared
+        // against the C kernel's. At an hour there is no C pin to compare
+        // against, so the check is liveness — plus `ticks >= RUN_TICKS`,
+        // without which a scenario that ended at tick 5 would report `pass`
+        // perfectly happily, having never been asked to survive anything.
+        #[cfg(not(feature = "soak"))]
         let ok = verdict.pass
             && !verdict.runaway
             && verdict.ticks == pin.ticks
@@ -95,6 +114,8 @@ fn main() -> ! {
             && verdict.lines == pin.lines
             && d.hash() == pin.digest
             && d.bytes() == pin.bytes;
+        #[cfg(feature = "soak")]
+        let ok = verdict.pass && !verdict.runaway && verdict.ticks >= RUN_TICKS;
 
         if ok {
             hprintln!(
@@ -104,20 +125,41 @@ fn main() -> ! {
         } else {
             failed += 1;
             hprintln!("{:<22} FAIL", pin.name);
+            #[cfg(feature = "soak")]
+            hprintln!(
+                "           pass={} runaway={} ticks {} of {}",
+                verdict.pass, verdict.runaway, verdict.ticks, RUN_TICKS
+            );
+            #[cfg(not(feature = "soak"))]
             hprintln!("           ticks  {:>8} want {:>8}", verdict.ticks, pin.ticks);
+            #[cfg(not(feature = "soak"))]
             hprintln!("           yields {:>8} want {:>8}", verdict.yields, pin.yields);
+            #[cfg(not(feature = "soak"))]
             hprintln!("           exits  {:>8} want {:>8}   <- sim time itself", verdict.exits, pin.exits);
+            #[cfg(not(feature = "soak"))]
             hprintln!("           lines  {:>8} want {:>8}", verdict.lines, pin.lines);
+            #[cfg(not(feature = "soak"))]
             hprintln!("           bytes  {:>8} want {:>8}", d.bytes(), pin.bytes);
+            #[cfg(not(feature = "soak"))]
             hprintln!("           digest {:#018x}", d.hash());
+            #[cfg(not(feature = "soak"))]
             hprintln!("           want   {:#018x}", pin.digest);
         }
     }
 
     hprintln!();
     if failed == 0 {
-        hprintln!("RESULT: PASS -- {} scenarios byte-identical to the C kernel", table.len());
-        hprintln!("        on RV32, at {} ticks each.", PIN_TICKS);
+        #[cfg(not(feature = "soak"))]
+        {
+            hprintln!("RESULT: PASS -- {} scenarios byte-identical to the C kernel", table.len());
+            hprintln!("        on RV32, at {} ticks each.", RUN_TICKS);
+        }
+        #[cfg(feature = "soak")]
+        {
+            hprintln!("RESULT: PASS -- {} scenarios still running after an hour", table.len());
+            hprintln!("        of simulated time ({} ticks) on RV32.", RUN_TICKS);
+            hprintln!("        Liveness, not conformance: no C pin exists at this length.");
+        }
         debug::exit(debug::EXIT_SUCCESS);
     } else {
         hprintln!("RESULT: FAIL -- {} of {} scenarios diverged", failed, table.len());
