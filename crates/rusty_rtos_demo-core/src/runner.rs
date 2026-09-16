@@ -38,8 +38,8 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    abortdelay, blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
-    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
+    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -199,6 +199,8 @@ pub enum State {
     BlockTim(blocktim::State),
     /// `AbortDelay.c`.
     AbortDelay(abortdelay::State),
+    /// `death.c`.
+    Death(death::State),
     /// `QPeek.c`.
     QPeek(qpeek::State),
     /// `GenQTest.c`.
@@ -231,6 +233,14 @@ pub struct Shared {
     pub timer_queue: QueueHandle,
     /// The running scenario's statics.
     pub state: State,
+    /// A task a body has just created, and the body to attach to it.
+    ///
+    /// `death` is the only scenario whose tasks are created with the
+    /// scheduler already running, and a body cannot reach `Runner::bodies`
+    /// itself — it is handed the kernel and this, nothing else. So it leaves
+    /// the request here and [`Runner::step_once`] drains it the moment the
+    /// step returns, which is before any other task can run.
+    pub spawn: Option<(TaskHandle, death::Body)>,
 }
 
 impl Default for Shared {
@@ -239,6 +249,7 @@ impl Default for Shared {
             max_ticks: 0,
             timer_queue: QueueHandle::NULL,
             state: State::None,
+            spawn: None,
         }
     }
 }
@@ -265,6 +276,14 @@ impl Shared {
             State::RecMutex(s) => s.still_running(),
             State::BlockTim(s) => s.still_running(),
             State::AbortDelay(s) => s.still_running(),
+            // UNREACHABLE by construction: `xIsCreateTaskStillRunning`
+            // needs the LIVE `uxTaskGetNumberOfTasks()`, which is the
+            // kernel's and not `Shared`'s, so `Check` answers `death`
+            // before it ever calls this. Returning `false` rather than
+            // something plausible is deliberate — were the interception
+            // ever removed, the scenario must FAIL rather than quietly
+            // pass a comparison of a number against itself.
+            State::Death(_) => false,
             State::QPeek(s) => s.still_running(),
             State::GenQTest(s) => s.still_running(),
             // Reached only when the hook is not the matching one,
@@ -315,6 +334,8 @@ pub enum Body<'a> {
     PollQ(pollq::Body),
     /// `AbortDelay.c`'s two.
     AbortDelay(abortdelay::Body),
+    /// `death.c`'s two.
+    Death(death::Body),
     /// `BlockQ.c`'s six.
     BlockQ(blockq::Body),
     /// `semtest.c`'s four.
@@ -400,6 +421,7 @@ impl Body<'_> {
             Self::Dynamic(b) => b.step(k, s),
             Self::PollQ(b) => b.step(k, s),
             Self::AbortDelay(b) => b.step(k, s),
+            Self::Death(b) => b.step(k, s),
             Self::BlockQ(b) => b.step(k, s),
             Self::SemTest(b) => b.step(k, s),
             Self::CountSem(b) => b.step(k, s),
@@ -434,8 +456,12 @@ impl Idle {
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>) -> Step {
         match self.pc {
             0 => {
-                // prvCheckTasksWaitingTermination is a no-op while nothing
-                // has been deleted, then: configIDLE_SHOULD_YIELD.
+                // `prvCheckTasksWaitingTermination()`, which takes no
+                // critical section and pays no exit while nothing has been
+                // deleted — so wiring it in leaves every scenario that never
+                // deletes a task byte-identical.
+                k.check_tasks_waiting_termination();
+                // configIDLE_SHOULD_YIELD.
                 if k.ready_len(0).unwrap_or(0) > 1 {
                     k.task_yield();
                 }
@@ -527,7 +553,7 @@ impl Timer {
             // empty, and one command per step is that loop unrolled — a
             // callback in the middle of it can block, and the daemon has to
             // be able to come back.
-            _ => match k.process_one_timer_command() {
+            _ => match k.process_one_timer_command(0) {
                 Ok(rusty_rtos_kernel::queue::Wait::Ready(true)) => {}
                 _ => self.pc = 0,
             },
@@ -563,6 +589,14 @@ impl Check {
                     // interrupt half latched as well as what its task half
                     // did, so the hook comes along for the ride.
                     let isr = *k.tick_hook();
+                    // `xIsCreateTaskStillRunning` also calls
+                    // `uxTaskGetNumberOfTasks()`, which is kernel state
+                    // rather than scenario state — and it is the half of
+                    // that check which proves the deletions happened.
+                    if let State::Death(state) = &mut s.state {
+                        let now = k.task_count();
+                        return Step::Finish(state.still_running(now));
+                    }
                     Step::Finish(s.still_running(isr))
                 } else {
                     Step::Continue
@@ -718,9 +752,20 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         if matches!(body, Body::Async(_)) {
             return body.poll_once();
         }
-        let mut k = kernel.borrow_mut();
-        let mut s = shared.borrow_mut();
-        body.step(&mut k, &mut s)
+        let step = {
+            let mut k = kernel.borrow_mut();
+            let mut s = shared.borrow_mut();
+            body.step(&mut k, &mut s)
+        };
+        // A body that created a task leaves the handle here; this is the
+        // only path by which `bodies` gains an entry after the run started.
+        let spawned = shared.borrow_mut().spawn.take();
+        if let Some((task, spawned)) = spawned {
+            if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
+                *slot = Body::Death(spawned);
+            }
+        }
+        step
     }
 
     /// The verdict for a run driven by [`Runner::step_once`].

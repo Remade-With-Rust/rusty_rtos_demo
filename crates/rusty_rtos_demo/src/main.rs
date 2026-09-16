@@ -27,7 +27,7 @@ use std::process::ExitCode;
 
 use rusty_rtos_demo_core::runner::{Runner, Shared};
 use rusty_rtos_demo_core::{
-    Scenario, Step, Verdict, abortdelay, blockq, blocktim, countsem, dynamic, eventgroups,
+    Scenario, Step, Verdict, abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups,
     genqtest, intsem, mbamp, pollq, pollq_async, pollq_typed, qoverwrite, qpeek, qsetpoll,
     recmutex, sbint, semtest, step_limit_for, timerdemo,
 };
@@ -195,6 +195,7 @@ fn main() -> ExitCode {
             Scenario::RecMutex => recmutex::start(&mut runner, max_ticks),
             Scenario::BlockTim => blocktim::start(&mut runner, max_ticks),
             Scenario::AbortDelay => abortdelay::start(&mut runner, max_ticks),
+            Scenario::Death => death::start(&mut runner, max_ticks),
             Scenario::QPeek => qpeek::start(&mut runner, max_ticks),
             Scenario::GenQTest => genqtest::start(&mut runner, max_ticks),
             Scenario::QOverwrite => qoverwrite::start(&mut runner, max_ticks),

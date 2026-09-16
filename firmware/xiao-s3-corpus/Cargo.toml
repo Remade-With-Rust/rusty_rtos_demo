@@ -1,0 +1,45 @@
+# A firmware example, so its own cargo project and its own workspace: the
+# parent excludes `firmware/*` because every chip wants its own target,
+# linker script and (here) its own toolchain.
+[package]
+name = "xiao-s3-corpus"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[features]
+# An hour of simulated time instead of the pinned length. A feature rather
+# than a second binary, so a plain `cargo run --release` keeps meaning the
+# conformance run.
+soak = []
+
+[dependencies]
+# The thing under test, by path, as firmware/README.md requires. No default
+# features: `no_std`, and no allocator at all. Identical to the Cortex-M and
+# RV32 cells' dependency line -- which is the point of this cell.
+rusty_rtos_demo-core = { path = "../../crates/rusty_rtos_demo-core", default-features = false }
+
+esp-hal = { version = "=1.2.1", features = ["esp32s3", "unstable"] }
+# esp-hal 1.2 images must carry an ESP-IDF app descriptor or the second-stage
+# bootloader refuses them; `esp_app_desc!()` in main.rs emits it.
+esp-bootloader-esp-idf = { version = "=0.6.0", features = ["esp32s3"] }
+esp-println = { version = "=0.18.0", default-features = false, features = [
+    "esp32s3",
+    "jtag-serial",
+] }
+esp-backtrace = { version = "=0.20.0", features = [
+    "esp32s3",
+    "panic-handler",
+    "println",
+] }
+
+# firmware/README.md's release profile for a chip.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+
+[workspace]

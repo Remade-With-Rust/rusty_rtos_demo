@@ -1,80 +1,80 @@
 # rusty_rtos_demo
 
+[![Remade With Rust](https://img.shields.io/badge/Remade%20With-Rust-000?logo=rust&logoColor=fff)](https://github.com/remade-with-rust)
+[![By Mata Network](https://img.shields.io/badge/by-Mata%20Network-5b2be0)](https://www.mata.network)
 [![crates.io](https://img.shields.io/crates/v/rusty_rtos_demo.svg)](https://crates.io/crates/rusty_rtos_demo)
 [![docs.rs](https://docs.rs/rusty_rtos_demo/badge.svg)](https://docs.rs/rusty_rtos_demo)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The FreeRTOS standard demo tasks (Demo/Common/Minimal) remade in Rust as the Kairos conformance corpus: every scenario self-checks like the C original and, on the sim port, diffs its trace against the C kernel's.
+The **conformance corpus** for Kairos: FreeRTOS's own demo task files remade as
+Rust state machines, run beside the C kernel compiled from pinned sources, with
+both sides emitting a trace line per kernel event. Identical means identical.
+MIT OR Apache-2.0.
 
-Part of **Kairos**, the Remade-With-Rust programme that rebuilds the FreeRTOS
-portfolio in memory-safe Rust, as independent packages that expose the API a
-FreeRTOS developer already knows and prove every scheduling decision against
-the C kernel's own trace.
+This is the package that turns "our scheduler behaves like FreeRTOS" from a
+claim into a diff.
 
-- This package's plan: [docs/plans/rusty_rtos_demo.md](docs/plans/rusty_rtos_demo.md)
-- Every number: [docs/LEDGER.md](docs/LEDGER.md)
-- The family plan: Kairos `docs/plans/rtos-mission.md` (umbrella repo)
+- **The corpus**: 19 scenarios, each byte-identical to the C kernel for
+  100,000 ticks, on four architectures — host, ARMv7-M, RV32 and Xtensa LX7,
+  the last on silicon.
+- **The method**: each scenario is a state machine because a task here owns no
+  stack, which is what lets the same corpus run on a part with no context-switch
+  port at all. The sim contract (`ORACLES.md`) fixes the tick, the exits and the
+  yields on both sides so a single early tick moves every later line.
+
+**Known gaps.** `IntQueue` is out of scope for a signal-driven host port.
+`AbortDelay` is 1,945 of 2,549 lines and the next line is a contract question
+rather than a kernel one — the C harness keys a queue's trace ordinal on its
+malloc address.
+
+- This package's plan: [docs/plans/rusty_rtos_demo.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/plans/rusty_rtos_demo.md)
+- Every number: [docs/LEDGER.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/LEDGER.md)
+- The family plan: Kairos [`docs/plans/rtos-mission.md`](https://github.com/Remade-With-Rust/kairos/blob/main/docs/plans/rtos-mission.md)
 
 **Claims discipline:** this README makes no performance or capability claim that
-is not backed by a test, a benchmark ledger entry, or a kill test recorded in the
-plan. "Scaffold" means scaffold. "Sim only" means the sim port; "builds, not
+is not backed by a test, a benchmark ledger entry, or a kill test recorded in
+the plan. "Scaffold" means scaffold. "Sim only" means the sim port; "builds, not
 flashed" means no chip has run it.
 
-## Status
+## Conformance
 
-**K2 in progress — the corpus is 16 scenarios; K1's 9 of 9 passed.**
-
-`QueueOverwrite`, `QueueSetPolling`, `IntSemTest`,
-`StreamBufferInterrupt`, `TimerDemo`, `EventGroupsDemo` and
-`MessageBufferAMP` join the K1 nine, bringing the corpus to 12,808,722
-trace lines identical to the C kernel at 100,000 ticks each. They are the first scenarios with an
-*interrupt* half: `TickIsr` is dispatched from the kernel's tick exactly
-where `vApplicationTickHook` runs, and the last two are the first to reach
-the software timer daemon — `TimerDemo` through its own commands and
-`EventGroupsDemo` through the pended function call
-`xEventGroupSetBitsFromISR` defers to.
-
-**K1 — 9 scenarios of 9. Passed.**
-
-`dynamic`, `PollQ`, `BlockQ`, `semtest`, `countsem`, `recmutex`, `blocktim`,
-`QPeek` and `GenQTest` are remade — 34 tasks — and every one produces a
-trace **identical to the C kernel's for 100,000 ticks**, 8,408,764 lines in
-all, with the counters equal and each scenario's own `xAre...StillRunning()`
-check passing.
+| | |
+|---|---|
+| scenarios byte-identical to the C kernel | **19** |
+| ticks per scenario | 100,000 |
+| soak, both emulators | RV32 18/18 in 58 min · M3 18/18 in 75 min |
+| on silicon (XIAO ESP32-S3) | **18/18** |
 
 ```sh
 kairos conform --all --ticks 100000      # from the Kairos umbrella
-kairos conform --all --exits             # every scenario, with the sim-time column
 ```
 
-`tests/conformance.rs` pins all nine offline — counters, line count, byte
-count and an FNV-1a/64 digest of the C kernel's own trace file — so drift
-fails in CI, which has no C toolchain.
+Offline, all of it is pinned by counters, line count, byte count and an
+FNV-1a/64 digest of the C kernel's own trace file, so a regression is caught
+without the oracle present.
 
-A scenario here is a **state machine, one step per C statement**: the
-kernel is `forbid(unsafe)` and cannot switch stacks, so a task cannot block
-inside a call — it returns, and the runner steps whoever the kernel says is
-current. Both kernels then make the same calls in the same order, which is
-all the trace records. The C `configASSERT` calls are kept, because they
-call kernel functions that take critical sections, and on the sim a
-critical-section exit is the clock.
+## Using it
 
-## What it is
+```sh
+kairos conform --all --ticks 100000   # the whole corpus against the C kernel
+kairos conform AbortDelay             # one scenario, on its own
+cargo test -p rusty_rtos_demo-core    # the offline pins, no oracle needed
+```
 
-- A pure-Rust remake of the corresponding FreeRTOS component. Same job, same
-  names, same semantics, new code, permissive licence, `forbid(unsafe)` in
-  the core.
-- Arch-agnostic: the core crate is `no_std` (+ `alloc`) and knows nothing about
-  a CPU, an allocator or an operating system. Ports and backends are thin,
-  feature-gated WRAP crates.
+## Performance
 
-## What it is not
+No rows of its own: this package measures agreement, not speed. The timing
+rows belong to [`rusty_rtos_kernel`](https://crates.io/crates/rusty_rtos_kernel)
+and [`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port).
 
-- Not a fork of FreeRTOS and not a binding to it. The C kernel is the
-  **oracle** this package is measured against, never a dependency.
-- Not a rewrite of a radio blob, a ROM or a vendor driver. Where silicon must
-  be touched, a port crate **wraps** `cortex-m-rt` / `riscv-rt` / `esp-hal`
-  and says so.
+## Portability
+
+| target | corpus |
+|---|---|
+| host (x86-64 Windows, Linux) | ✅ 19/19 |
+| `thumbv7m-none-eabi` | ✅ 18/18, QEMU `mps2-an385` |
+| `riscv32imac-unknown-none-elf` | ✅ 18/18, QEMU `virt` |
+| `xtensa-esp32s3-none-elf` | ✅ 18/18, **on silicon** |
 
 ## Layout
 
@@ -102,6 +102,32 @@ without `alloc`, plus `cargo deny check`. Firmware examples (Xtensa needs the
 esp toolchain; Cortex-M and RISC-V work on stable) are built from their own
 directories under `firmware/`.
 
+## Part of Remade With Rust
+
+This crate is part of **[Kairos](https://github.com/Remade-With-Rust/kairos)** —
+FreeRTOS remade in memory-safe Rust, as independent packages that expose the API
+a FreeRTOS developer already knows and prove every scheduling decision against
+the C kernel's own trace. `rusty_rtos_demo` is the evidence the rest of the family rests on.
+
+The family:
+[`rusty_rtos_core`](https://crates.io/crates/rusty_rtos_core),
+[`rusty_rtos_kernel`](https://crates.io/crates/rusty_rtos_kernel),
+[`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port),
+[`rusty_rtos_heap`](https://crates.io/crates/rusty_rtos_heap),
+`rusty_rtos-capi` and `rusty_rtos_demo` (neither published yet). Also
+check out the rest of
+**[github.com/remade-with-rust](https://github.com/remade-with-rust)**.
+
+## About Mata Network
+
+<!-- ORG BOILERPLATE — keep identical across repos -->
+
+[Mata Network](https://www.mata.network) builds sovereign, self-hostable
+infrastructure. **Remade With Rust** is our open-source home for the
+permissively-licensed building blocks that work depends on.
+
+<!-- /ORG BOILERPLATE -->
+
 ## License
 
 MIT OR Apache-2.0, at your option. FreeRTOS is MIT-licensed by Amazon.com,
@@ -113,15 +139,15 @@ published sources and links no FreeRTOS code.
 <!-- HARDENING-TABLE:BEGIN generated by use-protection-please — edit docs/plans/use-protection-please.md, not this block -->
 ## Hardening status
 
-**Tier** standard · **Audited** 2026-09-09 (survey) · **v1.0.0 gates** 9/12 · [Full checklist](docs/plans/use-protection-please.md)
+**Tier** critical-path · **Audited** 2026-09-16 (v0.1.0 release pass) · **v1.0.0 gates** 10/17 · [Full checklist](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/plans/use-protection-please.md)
 
-`██████████░░░░░░░░░░` **52%** &nbsp;·&nbsp; 12 Completed · 0 Scheduled · 11 Incomplete · 32 N/A
+`████████████░░░░░░░░` **62%** &nbsp;·&nbsp; 15 Completed · 0 Scheduled · 9 Incomplete · 31 N/A
 
 | Phase | ✅ Completed | 🗓 Scheduled | ⬜ Incomplete | · N/A |
 |---|--:|--:|--:|--:|
 | 0 — Threat modeling | 0 | 0 | 1 | 1 |
 | 1 — Toolchain | 2 | 0 | 2 | 0 |
-| 2 — Supply chain | 4 | 0 | 2 | 2 |
+| 2 — Supply chain | 7 | 0 | 0 | 1 |
 | 3 — Code level | 3 | 0 | 1 | 3 |
 | 4 — Static analysis | 0 | 0 | 0 | 1 |
 | 5 — Dynamic analysis | 1 | 0 | 0 | 2 |
@@ -132,7 +158,9 @@ published sources and links no FreeRTOS code.
 | 10 — Cryptography | 0 | 0 | 0 | 3 |
 | 11 — CI/CD, release, and operations | 1 | 0 | 4 | 0 |
 | 12 — Compliance controls | 0 | 0 | 0 | 14 |
-| **Total** | **12** | **0** | **11** | **32** |
+| **Total** | **15** | **0** | **9** | **31** |
+
+Gates waived for 0.x are listed with their reasons in the plan's "v0.1.0 release decision" section — an Incomplete gate not listed there is an omission, not a decision.
 
 **Architect** — [Tim Almond](https://github.com/Ttimmahlax) — accountable for this unit's security design; rendered
 <!-- HARDENING-TABLE:END -->

@@ -32,8 +32,9 @@ Rules:
 
 | cell | what it proves | needs |
 |---|---|---|
-| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | all 17 corpus scenarios byte-identical to the C kernel on **ARMv7-M** | nothing — `qemu-system-arm` |
-| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same 17, on **RV32** | nothing — `qemu-system-riscv32` |
+| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | all 18 corpus scenarios byte-identical to the C kernel on **ARMv7-M** | nothing — `qemu-system-arm` |
+| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same 18, on **RV32** | nothing — `qemu-system-riscv32` |
+| [`xiao-s3-corpus`](xiao-s3-corpus) | the same 18, on **Xtensa LX7 — SILICON, not an emulator** | a XIAO ESP32-S3 on a serial port, and the `esp` toolchain. Never started by a gate: its runner is `espflash` |
 
 Both are gates: each ends by calling `debug::exit`, so the guest's verdict
 becomes QEMU's exit code, and `kairos check rusty_rtos_demo --qemu`

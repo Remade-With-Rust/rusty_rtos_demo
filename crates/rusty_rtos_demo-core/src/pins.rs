@@ -28,16 +28,19 @@ use rusty_rtos_core::error::Result;
 
 use crate::runner::Runner;
 use crate::{
-    blockq, blocktim, countsem, dynamic, eventgroups, genqtest, intsem, mbamp, pollq, pollq_typed,
-    qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
+    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
 };
 
-/// How long every pinned run is. The check task ends the run at the first
-/// wake-up on or after this, so a scenario can report a tick or two more.
+/// The DEFAULT length of a pinned run. The check task ends the run at the
+/// first wake-up on or after this, so a scenario can report a tick or two
+/// more.
+///
+/// It is a default and no longer a universal: see [`Pin::run_ticks`].
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 17;
+pub const COUNT: usize = 18;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -45,6 +48,18 @@ pub struct Pin<W: fmt::Write> {
     pub name: &'static str,
     /// The scenario's `vStart...Tasks` equivalent.
     pub start: fn(&mut Runner<'_, W>, u64) -> Result<()>,
+    /// How long this scenario must be RUN for, which is not the same
+    /// question as how many ticks it ended on.
+    ///
+    /// Almost every scenario is doing its job by the first tick, so
+    /// [`PIN_TICKS`] is enough. `death` is not: its creator waits a whole
+    /// second before it counts tasks, another before it spawns any, and the
+    /// spawned tasks wait 200 ticks more before killing anything — so at
+    /// 2,000 ticks it ends ON the first creation having deleted nothing,
+    /// and would pin a trace that never exercises the feature it exists to
+    /// test. A run length that is too short is not a weaker gate; it is a
+    /// gate that cannot fail.
+    pub run_ticks: u64,
     /// `xTaskGetTickCount()` when the check task ended the run.
     pub ticks: u64,
     /// `ulKairosYields`.
@@ -122,6 +137,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "dynamic",
             start: dynamic::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 3589,
             exits: 21346,
@@ -132,6 +148,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "PollQ",
             start: pollq::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 43,
             exits: 2116,
@@ -142,6 +159,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "BlockQ",
             start: blockq::start,
+            run_ticks: PIN_TICKS,
             ticks: 2002,
             yields: 3913,
             exits: 25681,
@@ -152,6 +170,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "semtest",
             start: semtest::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 1296,
             exits: 23281,
@@ -162,6 +181,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "countsem",
             start: countsem::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 421,
             exits: 25602,
@@ -172,6 +192,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "recmutex",
             start: recmutex::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 815,
             exits: 21377,
@@ -182,6 +203,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "blocktim",
             start: blocktim::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 92,
             exits: 2287,
@@ -192,6 +214,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "QPeek",
             start: qpeek::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 1786,
             exits: 8313,
@@ -202,6 +225,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "GenQTest",
             start: genqtest::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 3013,
             exits: 26017,
@@ -212,6 +236,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "QueueOverwrite",
             start: qoverwrite::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 21,
             exits: 32001,
@@ -222,6 +247,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "QueueSetPolling",
             start: qsetpoll::start,
+            run_ticks: PIN_TICKS,
             ticks: 2000,
             yields: 688,
             exits: 21345,
@@ -232,6 +258,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "IntSemTest",
             start: intsem::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 107,
             exits: 2417,
@@ -242,6 +269,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "StreamBufferInterrupt",
             start: sbint::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 28,
             exits: 2085,
@@ -252,6 +280,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "TimerDemo",
             start: timerdemo::start,
+            run_ticks: PIN_TICKS,
             ticks: 2005,
             yields: 111,
             exits: 2672,
@@ -262,6 +291,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "EventGroupsDemo",
             start: eventgroups::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 4991,
             exits: 16_577,
@@ -272,6 +302,7 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "MessageBufferAMP",
             start: mbamp::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 71,
             exits: 2072,
@@ -288,12 +319,28 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
         Pin {
             name: "PollQ-typed",
             start: pollq_typed::start,
+            run_ticks: PIN_TICKS,
             ticks: 2001,
             yields: 43,
             exits: 2116,
             lines: 2362,
             digest: 0xf50b_bbbd_22ec_16d1,
             bytes: 68_195,
+        },
+        // `death.c`: the only scenario that deletes a task, and the only one
+        // that creates one with the scheduler already running. Its numbers
+        // are the C kernel's at 4,000 ticks — two full create/kill/self-kill
+        // cycles — and no shorter run reaches a `vTaskDelete` at all.
+        Pin {
+            name: "death",
+            start: death::start,
+            run_ticks: 4_000,
+            ticks: 4000,
+            yields: 55,
+            exits: 3890,
+            lines: 4369,
+            digest: 0xec10_62cf_1c36_07ea,
+            bytes: 129_014,
         },
     ]
 }

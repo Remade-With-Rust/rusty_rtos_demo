@@ -35,8 +35,10 @@ fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
         let shared = RefCell::new(Shared::default());
         let verdict = {
             let mut runner = Runner::new(&kernel, &shared);
-            (pin.start)(&mut runner, PIN_TICKS).expect("the scenario starts");
-            runner.run(step_limit_for(PIN_TICKS))
+            // NOT `PIN_TICKS`: a scenario with its own floor needs it, and
+            // `death` at 2,000 ticks would pin a trace with no deletion in it.
+            (pin.start)(&mut runner, pin.run_ticks).expect("the scenario starts");
+            runner.run(step_limit_for(pin.run_ticks))
         };
 
         assert!(
@@ -57,6 +59,25 @@ fn every_scenario_reproduces_the_c_kernels_trace_and_counters() {
             pin.name
         );
         assert_eq!(verdict.lines, pin.lines, "{}: trace lines", pin.name);
+
+        // Law 3, checked rather than assumed: a healthy kernel NEVER fails
+        // to choose a task, because the idle task is always ready. Every
+        // route by which `vTaskSwitchContext` could decline used to be a
+        // bare `return`; now it counts, and this is what reads the count.
+        //
+        // It cannot move a trace byte — a stall is a path the corpus never
+        // takes — so this is a free invariant on top of the diff.
+        {
+            let k = kernel.borrow();
+            assert_eq!(
+                k.stalls(),
+                0,
+                "{}: the scheduler failed to choose a task {} time(s), first: {:?}",
+                pin.name,
+                k.stalls(),
+                k.first_stall()
+            );
+        }
 
         let digest = Runner::into_writer(kernel);
         assert_eq!(

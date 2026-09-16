@@ -46,6 +46,7 @@ pub mod abortdelay;
 pub mod blockq;
 pub mod blocktim;
 pub mod countsem;
+pub mod death;
 pub mod dynamic;
 pub mod eventgroups;
 pub mod genqtest;
@@ -115,6 +116,8 @@ pub enum Scenario {
     BlockTim,
     /// `AbortDelay.c`.
     AbortDelay,
+    /// `death.c`.
+    Death,
     /// `QPeek.c`.
     QPeek,
     /// `GenQTest.c`.
@@ -154,6 +157,7 @@ impl Scenario {
             Self::RecMutex => "recmutex",
             Self::BlockTim => "blocktim",
             Self::AbortDelay => "AbortDelay",
+            Self::Death => "death",
             Self::QPeek => "QPeek",
             Self::GenQTest => "GenQTest",
             Self::QOverwrite => "QueueOverwrite",
@@ -180,6 +184,7 @@ impl Scenario {
             "recmutex" => Some(Self::RecMutex),
             "blocktim" => Some(Self::BlockTim),
             "AbortDelay" => Some(Self::AbortDelay),
+            "death" => Some(Self::Death),
             "QPeek" => Some(Self::QPeek),
             "GenQTest" => Some(Self::GenQTest),
             "QueueOverwrite" => Some(Self::QOverwrite),
