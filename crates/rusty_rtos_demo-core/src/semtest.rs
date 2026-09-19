@@ -84,13 +84,9 @@ pub struct Body {
 }
 
 impl Body {
-    pub(crate) fn step<W: fmt::Write>(
-        &mut self,
-        k: &mut SimKernel<W>,
-        s: &mut Shared,
-    ) -> runner::Stepped {
+    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         let runner::State::SemTest(s) = &mut s.state else {
-            return runner::Stepped::Ran(Step::Finish(false));
+            return Step::Finish(false);
         };
         // for( ulCounter = 0; ulCounter <= ulExpectedValue; ulCounter++ )
         //     { *pulSharedVariable = ulCounter; if( ... != ulCounter ) sError = pdTRUE; }
@@ -123,13 +119,9 @@ impl Body {
                 }
                 self.counter = self.counter.wrapping_add(1);
             },
-            _ => {
-                self.step_cycle(k, s);
-                return runner::Stepped::Ran(Step::Continue);
-            }
+            _ => self.step_cycle(k, s),
         }
-        // The counting loop calls nothing, so it leaves nothing to settle.
-        runner::Stepped::Quiet(Step::Continue)
+        Step::Continue
     }
 
     /// The states either side of the counting loop, which run once per
