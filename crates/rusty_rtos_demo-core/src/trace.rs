@@ -95,6 +95,63 @@ impl<W: fmt::Write> LineTrace<W> {
         self.out
     }
 
+    /// Write a `u64` in decimal, without `Display`.
+    ///
+    /// `Display for u64` goes through `pad_integral`, which carries sign,
+    /// width, fill and alignment that no trace line asks for. These are the
+    /// same digits it would have produced.
+    fn num(&mut self, value: u64) {
+        let mut buf = [0u8; 20];
+        let mut at = buf.len();
+        let mut v = value;
+        loop {
+            at = at.saturating_sub(1);
+            if let Some(slot) = buf.get_mut(at) {
+                *slot = b'0'.saturating_add(u8::try_from(v % 10).unwrap_or(0));
+            }
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        }
+        // Digits are ASCII, so this cannot fail; an impossible failure is
+        // reported the same way a writer failure is.
+        match buf.get(at..).map(core::str::from_utf8) {
+            Some(Ok(text)) => self.raw(text),
+            _ => self.failed = true,
+        }
+    }
+
+    /// Write a string through, recording a writer failure the way the rest of
+    /// this printer does.
+    fn raw(&mut self, text: &str) {
+        if self.out.write_str(text).is_err() {
+            self.failed = true;
+        }
+    }
+
+    /// `<tick> <NAME>`, which every line starts with.
+    fn head(&mut self, tick: u64, name: &str) {
+        self.num(tick);
+        self.raw(" ");
+        self.raw(name);
+    }
+
+    /// Count the line, the way `write_line` does.
+    fn done(&mut self) {
+        self.lines = self.lines.wrapping_add(1);
+    }
+
+    /// `<tick> <NAME> <arg>` without the formatting machinery.
+    fn line_tick_name_str(&mut self, tick: u64, name: &str, arg: &str) {
+        self.num(tick);
+        self.raw(" ");
+        self.raw(name);
+        self.raw(" ");
+        self.raw(arg);
+        self.lines = self.lines.wrapping_add(1);
+    }
+
     fn write_line(&mut self, args: fmt::Arguments<'_>) {
         if self.out.write_fmt(args).is_err() {
             self.failed = true;
@@ -131,12 +188,16 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::TaskCreateFailed
             | Event::LowPowerIdleBegin
             | Event::LowPowerIdleEnd => {
-                self.write_line(format_args!("{tick} {name}"));
+                self.head(tick, name);
+                self.done();
                 self.end_line();
             }
             // `<tick> <EVENT> <arg>`
             Event::TaskIncrementTick { tick: value } => {
-                self.write_line(format_args!("{tick} {name} {value}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.num(value);
+                self.done();
                 self.end_line();
             }
             // `<tick> <EVENT> <task>`
@@ -151,7 +212,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::MovedTaskToOverflowDelayedList { name: task, .. }
             | Event::TimerCreate { name: task, .. }
             | Event::TimerExpired { name: task, .. } => {
-                self.write_line(format_args!("{tick} {name} {task}"));
+                self.line_tick_name_str(tick, name, task);
                 self.end_line();
             }
             // `<tick> <EVENT> <task> <arg>`
@@ -176,13 +237,23 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 ..
             } => {
                 let value = priority.get();
-                self.write_line(format_args!("{tick} {name} {task} {value}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.raw(task);
+                self.raw(" ");
+                self.num(u64::from(value));
+                self.done();
                 self.end_line();
             }
             Event::TaskDelay {
                 name: task, ticks, ..
             } => {
-                self.write_line(format_args!("{tick} {name} {task} {ticks}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.raw(task);
+                self.raw(" ");
+                self.num(ticks);
+                self.done();
                 self.end_line();
             }
             Event::TaskDelayUntil {
@@ -190,7 +261,12 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 wake_at,
                 ..
             } => {
-                self.write_line(format_args!("{tick} {name} {task} {wake_at}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.raw(task);
+                self.raw(" ");
+                self.num(wake_at);
+                self.done();
                 self.end_line();
             }
             Event::TaskNotify {
@@ -208,13 +284,23 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::TaskNotifyTakeBlock {
                 name: task, index, ..
             } => {
-                self.write_line(format_args!("{tick} {name} {task} {index}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.raw(task);
+                self.raw(" ");
+                self.num(u64::try_from(index).unwrap_or(0));
+                self.done();
                 self.end_line();
             }
             // `<tick> <EVENT> q<n> <length>`
             Event::QueueCreate { queue, length, .. } => {
                 let n = ordinal(queue.index());
-                self.write_line(format_args!("{tick} {name} q{n} {length}"));
+                self.head(tick, name);
+                self.raw(" q");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::try_from(length).unwrap_or(0));
+                self.done();
                 self.end_line();
             }
             // `<tick> <EVENT> q<n>`
@@ -229,23 +315,41 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::BlockingOnQueueReceive { queue, .. }
             | Event::BlockingOnQueuePeek { queue, .. } => {
                 let n = ordinal(queue.index());
-                self.write_line(format_args!("{tick} {name} q{n}"));
+                self.num(tick);
+                self.raw(" ");
+                self.raw(name);
+                self.raw(" q");
+                self.num(u64::from(n));
+                self.lines = self.lines.wrapping_add(1);
                 self.end_line();
             }
             // `<tick> <EVENT> g<n> [<arg>...]`
             Event::EventGroupCreate { group } => {
                 let n = ordinal(group.index());
-                self.write_line(format_args!("{tick} {name} g{n}"));
+                self.head(tick, name);
+                self.raw(" g");
+                self.num(u64::from(n));
+                self.done();
                 self.end_line();
             }
             Event::EventGroupSetBits { group, bits } => {
                 let n = ordinal(group.index());
-                self.write_line(format_args!("{tick} {name} g{n} {bits}"));
+                self.head(tick, name);
+                self.raw(" g");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::from(bits));
+                self.done();
                 self.end_line();
             }
             Event::EventGroupWaitBitsBlock { group, bits } => {
                 let n = ordinal(group.index());
-                self.write_line(format_args!("{tick} {name} g{n} {bits}"));
+                self.head(tick, name);
+                self.raw(" g");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::from(bits));
+                self.done();
                 self.end_line();
             }
             Event::EventGroupWaitBitsEnd {
@@ -255,7 +359,14 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             } => {
                 let n = ordinal(group.index());
                 let t = u8::from(timed_out);
-                self.write_line(format_args!("{tick} {name} g{n} {bits} {t}"));
+                self.head(tick, name);
+                self.raw(" g");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::from(bits));
+                self.raw(" ");
+                self.num(u64::from(t));
+                self.done();
                 self.end_line();
             }
             // `<tick> <EVENT> s<n> <arg>`
@@ -265,13 +376,23 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             } => {
                 let n = ordinal(buffer.index());
                 let m = u8::from(is_message_buffer);
-                self.write_line(format_args!("{tick} {name} s{n} {m}"));
+                self.head(tick, name);
+                self.raw(" s");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::from(m));
+                self.done();
                 self.end_line();
             }
             Event::StreamBufferSend { buffer, bytes }
             | Event::StreamBufferReceive { buffer, bytes } => {
                 let n = ordinal(buffer.index());
-                self.write_line(format_args!("{tick} {name} s{n} {bytes}"));
+                self.head(tick, name);
+                self.raw(" s");
+                self.num(u64::from(n));
+                self.raw(" ");
+                self.num(u64::try_from(bytes).unwrap_or(0));
+                self.done();
                 self.end_line();
             }
             Event::TimerCommandSend {
