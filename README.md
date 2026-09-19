@@ -6,13 +6,9 @@
 [![docs.rs](https://docs.rs/rusty_rtos_demo/badge.svg)](https://docs.rs/rusty_rtos_demo)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **conformance corpus** for Kairos: FreeRTOS's own demo task files remade as
-Rust state machines, run beside the C kernel compiled from pinned sources, with
-both sides emitting a trace line per kernel event. Identical means identical.
-MIT OR Apache-2.0.
-
-This is the package that turns "our scheduler behaves like FreeRTOS" from a
-claim into a diff.
+The conformance corpus for Kairos. FreeRTOS's own demo task files remade as
+Rust state machines, run beside the C kernel compiled from pinned sources, both
+sides emitting a trace line per kernel event. Identical means identical.
 
 - **The corpus**: 19 scenarios, each byte-identical to the C kernel for
   100,000 ticks, on four architectures — host, ARMv7-M, RV32 and Xtensa LX7,
