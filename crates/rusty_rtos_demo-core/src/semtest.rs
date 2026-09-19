@@ -89,26 +89,18 @@ impl Body {
         let runner::State::SemTest(s) = &mut s.state else {
             return Step::Finish(false);
         };
+        // for( ulCounter = 0; ulCounter <= ulExpectedValue; ulCounter++ )
+        //     { *pulSharedVariable = ulCounter; if( ... != ulCounter ) sError = pdTRUE; }
+        //
+        // Pure computation: no kernel call, so no critical section, so no
+        // tick — on either side. The loop is long on purpose, and the
+        // switches that do happen come from the *other* tasks.
+        //
+        // It is also very nearly every step this body takes, so it is tested
+        // for rather than jumped to: a nine-way table charges all nine states
+        // the same six instructions, where three compares reach these three
+        // in one, two and three.
         match self.pc {
-            // portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
-            // sNextCheckVariable++; portEXIT_CRITICAL();
-            0 => self.claim_slot(k, s),
-            // if( xSemaphoreTake( xSemaphore, xBlockTime ) == pdPASS )
-            1 => self.take(k),
-            // if( *pulSharedVariable != ulExpectedValue ) { sError = pdTRUE; }
-            2 => {
-                if s.shared.get(self.shared).copied() != Some(self.expected) {
-                    self.error = true;
-                }
-                self.counter = 0;
-                self.pc = 3;
-            }
-            // for( ulCounter = 0; ulCounter <= ulExpectedValue; ulCounter++ )
-            //     { *pulSharedVariable = ulCounter; if( ... != ulCounter ) sError = pdTRUE; }
-            //
-            // Pure computation: no kernel call, so no critical section, so
-            // no tick — on either side. The loop is long on purpose, and
-            // the switches that do happen come from the *other* tasks.
             3 => {
                 if let Some(cell) = s.shared.get_mut(self.shared) {
                     *cell = self.counter;
@@ -129,6 +121,32 @@ impl Body {
                     self.pc = 3;
                 }
             }
+            _ => self.step_cycle(k, s),
+        }
+        Step::Continue
+    }
+
+    /// The six states either side of the counting loop, which run once per
+    /// semaphore cycle rather than once per count.
+    ///
+    /// Out of line so the loop above neither jumps through their table nor
+    /// carries their frame.
+    #[inline(never)]
+    fn step_cycle<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) {
+        match self.pc {
+            // portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
+            // sNextCheckVariable++; portEXIT_CRITICAL();
+            0 => self.claim_slot(k, s),
+            // if( xSemaphoreTake( xSemaphore, xBlockTime ) == pdPASS )
+            1 => self.take(k),
+            // if( *pulSharedVariable != ulExpectedValue ) { sError = pdTRUE; }
+            2 => {
+                if s.shared.get(self.shared).copied() != Some(self.expected) {
+                    self.error = true;
+                }
+                self.counter = 0;
+                self.pc = 3;
+            }
             // if( xSemaphoreGive( xSemaphore ) == pdFALSE ) { sError = pdTRUE; }
             6 => self.give(k),
             // if( sError == pdFALSE ) { sCheckVariables[ sCheckVariableToUse ]++; }
@@ -143,7 +161,6 @@ impl Body {
             // if( xBlockTime != 0 ) { vTaskDelay( xBlockTime * semtstDELAY_FACTOR ); }
             _ => self.wait_out(k),
         }
-        Step::Continue
     }
 
     /// `portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
