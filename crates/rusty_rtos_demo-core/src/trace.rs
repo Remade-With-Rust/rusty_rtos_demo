@@ -168,21 +168,9 @@ impl<W: fmt::Write> LineTrace<W> {
         self.raw(name);
     }
 
-    /// Count the line and end it.
-    ///
-    /// These were two calls per line -- `done` then `end_line` -- always
-    /// together and always in this order, about 2.6 million times over the
-    /// corpus.
+    /// Count the line, the way `write_line` does.
     fn done(&mut self) {
         self.lines = self.lines.wrapping_add(1);
-        if self.debug_exits {
-            let exits = self.exits;
-            if self.out.write_fmt(format_args!(" #{exits}\n")).is_err() {
-                self.failed = true;
-            }
-        } else {
-            self.raw("\n");
-        }
     }
 
     /// `<tick> <NAME> <arg>` without the formatting machinery.
@@ -195,6 +183,19 @@ impl<W: fmt::Write> LineTrace<W> {
         self.lines = self.lines.wrapping_add(1);
     }
 
+    /// Every printer above ends its line with this, so the debug column
+    /// goes on exactly once and the newline is never forgotten.
+    fn end_line(&mut self) {
+        let result = if self.debug_exits {
+            let exits = self.exits;
+            self.out.write_fmt(format_args!(" #{exits}\n"))
+        } else {
+            self.out.write_str("\n")
+        };
+        if result.is_err() {
+            self.failed = true;
+        }
+    }
 }
 
 impl<W: fmt::Write> Trace for LineTrace<W> {
@@ -212,6 +213,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::LowPowerIdleEnd => {
                 self.head(tick, name);
                 self.done();
+                self.end_line();
             }
             // `<tick> <EVENT> <arg>`
             Event::TaskIncrementTick { tick: value } => {
@@ -219,6 +221,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(value);
                 self.done();
+                self.end_line();
             }
             // `<tick> <EVENT> <task>`
             Event::TaskDelete { name: task, .. }
@@ -233,6 +236,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::TimerCreate { name: task, .. }
             | Event::TimerExpired { name: task, .. } => {
                 self.line_tick_name_str(tick, name, task);
+                self.end_line();
             }
             // `<tick> <EVENT> <task> <arg>`
             Event::TaskCreate {
@@ -262,6 +266,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::from(value));
                 self.done();
+                self.end_line();
             }
             Event::TaskDelay {
                 name: task, ticks, ..
@@ -272,6 +277,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(ticks);
                 self.done();
+                self.end_line();
             }
             Event::TaskDelayUntil {
                 name: task,
@@ -284,6 +290,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(wake_at);
                 self.done();
+                self.end_line();
             }
             Event::TaskNotify {
                 name: task, index, ..
@@ -306,6 +313,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::try_from(index).unwrap_or(0));
                 self.done();
+                self.end_line();
             }
             // `<tick> <EVENT> q<n> <length>`
             Event::QueueCreate { queue, length, .. } => {
@@ -316,6 +324,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::try_from(length).unwrap_or(0));
                 self.done();
+                self.end_line();
             }
             // `<tick> <EVENT> q<n>`
             Event::QueueSend { queue, .. }
@@ -335,6 +344,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" q");
                 self.num(u64::from(n));
                 self.lines = self.lines.wrapping_add(1);
+                self.end_line();
             }
             // `<tick> <EVENT> g<n> [<arg>...]`
             Event::EventGroupCreate { group } => {
@@ -343,6 +353,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" g");
                 self.num(u64::from(n));
                 self.done();
+                self.end_line();
             }
             Event::EventGroupSetBits { group, bits } => {
                 let n = ordinal(group.index());
@@ -352,6 +363,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::from(bits));
                 self.done();
+                self.end_line();
             }
             Event::EventGroupWaitBitsBlock { group, bits } => {
                 let n = ordinal(group.index());
@@ -361,6 +373,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::from(bits));
                 self.done();
+                self.end_line();
             }
             Event::EventGroupWaitBitsEnd {
                 group,
@@ -377,6 +390,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::from(t));
                 self.done();
+                self.end_line();
             }
             // `<tick> <EVENT> s<n> <arg>`
             Event::StreamBufferCreate {
@@ -391,6 +405,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::from(m));
                 self.done();
+                self.end_line();
             }
             Event::StreamBufferSend { buffer, bytes }
             | Event::StreamBufferReceive { buffer, bytes } => {
@@ -401,6 +416,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(u64::try_from(bytes).unwrap_or(0));
                 self.done();
+                self.end_line();
             }
             Event::TimerCommandSend {
                 name: task,
@@ -416,6 +432,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.raw(" ");
                 self.num(value);
                 self.done();
+                self.end_line();
             }
             // The event set is `#[non_exhaustive]`: a variant this sink has
             // not learned prints its name alone rather than vanishing, so a
