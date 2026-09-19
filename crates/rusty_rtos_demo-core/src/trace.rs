@@ -52,6 +52,10 @@ pub struct LineTrace<W: fmt::Write> {
     exits: u64,
 }
 
+/// "00" through "99", so two decimal digits are a slice of a `str`
+/// rather than bytes that have to be validated back into one.
+const PAIRS: &str = "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899";
+
 impl<W: fmt::Write> LineTrace<W> {
     /// A sink writing to `out`.
     pub const fn new(out: W) -> Self {
@@ -98,27 +102,42 @@ impl<W: fmt::Write> LineTrace<W> {
     /// Write a `u64` in decimal, without `Display`.
     ///
     /// `Display for u64` goes through `pad_integral`, which carries sign,
-    /// width, fill and alignment that no trace line asks for. These are the
-    /// same digits it would have produced.
+    /// width, fill and alignment that no trace line asks for.
+    ///
+    /// Two digits come out per step, sliced from [`PAIRS`]. A slice of a
+    /// `str` is already a `str`, so nothing is validated -- the first version
+    /// built a byte buffer and then asked `from_utf8` to check digits it had
+    /// just written, which the profile put at 20,122,806 instructions.
     fn num(&mut self, value: u64) {
-        let mut buf = [0u8; 20];
-        let mut at = buf.len();
+        // At most ten two-digit groups in a `u64`.
+        let mut groups = [0u8; 10];
+        let mut at = groups.len();
         let mut v = value;
-        loop {
+
+        while v >= 100 {
             at = at.saturating_sub(1);
-            if let Some(slot) = buf.get_mut(at) {
-                *slot = b'0'.saturating_add(u8::try_from(v % 10).unwrap_or(0));
+            if let Some(slot) = groups.get_mut(at) {
+                *slot = u8::try_from(v % 100).unwrap_or(0);
             }
-            v /= 10;
-            if v == 0 {
-                break;
-            }
+            v /= 100;
         }
-        // Digits are ASCII, so this cannot fail; an impossible failure is
-        // reported the same way a writer failure is.
-        match buf.get(at..).map(core::str::from_utf8) {
-            Some(Ok(text)) => self.raw(text),
-            _ => self.failed = true,
+
+        // The leading group is one character below ten, which is what keeps a
+        // number from picking up a leading zero.
+        let lead = usize::try_from(v).unwrap_or(0).saturating_mul(2);
+        if v < 10 {
+            self.raw(
+                PAIRS
+                    .get(lead.saturating_add(1)..lead.saturating_add(2))
+                    .unwrap_or("0"),
+            );
+        } else {
+            self.raw(PAIRS.get(lead..lead.saturating_add(2)).unwrap_or("00"));
+        }
+
+        for group in groups.get(at..).unwrap_or(&[]) {
+            let g = usize::from(*group).saturating_mul(2);
+            self.raw(PAIRS.get(g..g.saturating_add(2)).unwrap_or("00"));
         }
     }
 
