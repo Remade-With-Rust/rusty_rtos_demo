@@ -92,25 +92,9 @@ impl Body {
         match self.pc {
             // portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
             // sNextCheckVariable++; portEXIT_CRITICAL();
-            0 => {
-                k.enter_critical();
-                self.check_slot = usize::try_from(s.next_check).unwrap_or(0);
-                s.next_check = s.next_check.wrapping_add(1);
-                k.exit_critical();
-                self.pc = 1;
-            }
+            0 => self.claim_slot(k, s),
             // if( xSemaphoreTake( xSemaphore, xBlockTime ) == pdPASS )
-            1 => match k.semaphore_take(self.semaphore, self.block_time) {
-                Ok(Wait::Ready(())) => self.pc = 2,
-                Ok(Wait::Blocked) => {}
-                // The take timed out. A polling task yields; a blocking one
-                // simply tries again.
-                Err(_) => {
-                    if self.block_time == 0 {
-                        k.task_yield();
-                    }
-                }
-            },
+            1 => self.take(k),
             // if( *pulSharedVariable != ulExpectedValue ) { sError = pdTRUE; }
             2 => {
                 if s.shared.get(self.shared).copied() != Some(self.expected) {
@@ -146,12 +130,7 @@ impl Body {
                 }
             }
             // if( xSemaphoreGive( xSemaphore ) == pdFALSE ) { sError = pdTRUE; }
-            6 => {
-                if !matches!(k.semaphore_give(self.semaphore), Ok(Wait::Ready(()))) {
-                    self.error = true;
-                }
-                self.pc = 7;
-            }
+            6 => self.give(k),
             // if( sError == pdFALSE ) { sCheckVariables[ sCheckVariableToUse ]++; }
             7 => {
                 if !self.error && self.check_slot < NUM_TASKS {
@@ -162,14 +141,58 @@ impl Body {
                 self.pc = 8;
             }
             // if( xBlockTime != 0 ) { vTaskDelay( xBlockTime * semtstDELAY_FACTOR ); }
-            _ => {
-                if self.block_time != 0 {
-                    let _ = k.delay(self.block_time.saturating_mul(DELAY_FACTOR));
-                }
-                self.pc = 1;
-            }
+            _ => self.wait_out(k),
         }
         Step::Continue
+    }
+
+    /// `portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
+    /// sNextCheckVariable++; portEXIT_CRITICAL();`
+    ///
+    /// Out of line, with its three siblings, so that the counting loop this
+    /// body spends nearly all its steps in does not carry a frame sized for
+    /// a kernel call it never makes.
+    #[inline(never)]
+    fn claim_slot<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) {
+        k.enter_critical();
+        self.check_slot = usize::try_from(s.next_check).unwrap_or(0);
+        s.next_check = s.next_check.wrapping_add(1);
+        k.exit_critical();
+        self.pc = 1;
+    }
+
+    /// `if( xSemaphoreTake( xSemaphore, xBlockTime ) == pdPASS )`
+    #[inline(never)]
+    fn take<W: fmt::Write>(&mut self, k: &mut SimKernel<W>) {
+        match k.semaphore_take(self.semaphore, self.block_time) {
+            Ok(Wait::Ready(())) => self.pc = 2,
+            Ok(Wait::Blocked) => {}
+            // The take timed out. A polling task yields; a blocking one
+            // simply tries again.
+            Err(_) => {
+                if self.block_time == 0 {
+                    k.task_yield();
+                }
+            }
+        }
+    }
+
+    /// `if( xSemaphoreGive( xSemaphore ) == pdFALSE ) { sError = pdTRUE; }`
+    #[inline(never)]
+    fn give<W: fmt::Write>(&mut self, k: &mut SimKernel<W>) {
+        if !matches!(k.semaphore_give(self.semaphore), Ok(Wait::Ready(()))) {
+            self.error = true;
+        }
+        self.pc = 7;
+    }
+
+    /// `if( xBlockTime != 0 ) { vTaskDelay( xBlockTime * semtstDELAY_FACTOR ); }`
+    #[inline(never)]
+    fn wait_out<W: fmt::Write>(&mut self, k: &mut SimKernel<W>) {
+        if self.block_time != 0 {
+            let _ = k.delay(self.block_time.saturating_mul(DELAY_FACTOR));
+        }
+        self.pc = 1;
     }
 }
 
