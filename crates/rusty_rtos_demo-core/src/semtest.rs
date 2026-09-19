@@ -95,21 +95,22 @@ impl Body {
         // for( ulCounter = 0; ulCounter <= ulExpectedValue; ulCounter++ )
         //     { *pulSharedVariable = ulCounter; if( ... != ulCounter ) sError = pdTRUE; }
         //
-        // ONE state, where the rest of this body gives a statement each.
+        // ONE state, where the rest of this body gives a statement each —
+        // and the whole loop within it, not one pass of it.
         //
-        // Splitting a C statement across steps buys the corpus somewhere for
-        // a preemption to land. This loop has nowhere to offer: it makes no
-        // kernel call, so it leaves no critical section, so it raises no tick
-        // — and a tick is the only thing that moves the sim's scheduler. The
-        // C is uninterrupted here for the same reason. Three states would be
-        // three chances for nothing to happen, on 96.5% of the steps the
-        // corpus takes.
+        // A step is a place the kernel could take the task away. This loop
+        // offers none: from the first write to the last it makes no kernel
+        // call, so it leaves no critical section, so it raises no tick, and a
+        // tick is the only thing that moves the sim's scheduler. The C runs
+        // it uninterrupted for the same reason, and there is no preemption
+        // point between the end of one pass and the start of the next either.
         //
-        // It is also nearly every step this body takes, so it is tested for
-        // rather than jumped to: the table for the states either side is out
-        // of line behind one compare.
+        // Splitting it gave the corpus four thousand dispatches into a place
+        // where nothing can happen. It still runs `ulExpectedValue + 1`
+        // times, writes and reads the same word in the same order, and ends
+        // at the same count.
         match self.pc {
-            3 => {
+            3 => loop {
                 if let Some(cell) = s.shared.get_mut(self.shared) {
                     *cell = self.counter;
                 }
@@ -118,10 +119,10 @@ impl Body {
                 }
                 if self.counter >= self.expected {
                     self.pc = 4;
-                } else {
-                    self.counter = self.counter.wrapping_add(1);
+                    break;
                 }
-            }
+                self.counter = self.counter.wrapping_add(1);
+            },
             _ => {
                 self.step_cycle(k, s);
                 return runner::Stepped::Ran(Step::Continue);
