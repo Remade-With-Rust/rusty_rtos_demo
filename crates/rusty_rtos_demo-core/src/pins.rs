@@ -117,11 +117,18 @@ impl Default for Digest {
 
 impl fmt::Write for Digest {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        // The accumulator rides in a local. The loop this replaces did a
+        // read-modify-write of TWO struct fields for every byte -- through
+        // `&mut self`, where the compiler will not keep them in registers --
+        // and the byte counter is just the length, known before the loop.
+        // Same FNV-1a over the same bytes, same count.
+        let mut hash = self.hash;
         for byte in s.as_bytes() {
-            self.hash ^= u64::from(*byte);
-            self.hash = self.hash.wrapping_mul(0x100_0000_01b3);
-            self.bytes = self.bytes.wrapping_add(1);
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100_0000_01b3);
         }
+        self.hash = hash;
+        self.bytes = self.bytes.wrapping_add(s.len());
         Ok(())
     }
 }
