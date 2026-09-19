@@ -166,6 +166,21 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
     }
 }
 
+/// What one dispatch of a body reports back to the runner.
+///
+/// `Spawned` exists so that only `death.c`'s creator -- the one body that
+/// adds a task mid-run -- pays for the question. The runner used to ask
+/// every body on every step.
+pub(crate) enum Stepped {
+    /// The body is a future: it reaches the kernel through the cell the
+    /// runner is holding, so the runner has to let go and poll it.
+    Poll,
+    /// It took a step.
+    Ran(Step),
+    /// It took a step, and left a task for the runner to adopt.
+    Spawned(Step),
+}
+
 /// What one step of a task body reports back to the runner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -415,24 +430,29 @@ impl Body<'_> {
     /// The caller used to ask `matches!(self, Body::Async(_))` before calling
     /// this, which read the discriminant a second time to answer what the
     /// table below was about to answer anyway.
-    pub(crate) fn step<W: fmt::Write>(
-        &mut self,
-        k: &mut SimKernel<W>,
-        s: &mut Shared,
-    ) -> Option<Step> {
-        Some(match self {
+    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Stepped {
+        Stepped::Ran(match self {
             Self::Empty => Step::Finish(false),
             // An `async` body reaches the kernel through the same cell that
             // is borrowed to get here, so it cannot be stepped from inside
             // that borrow. The caller drops it and polls.
-            Self::Async(_) => return None,
+            Self::Async(_) => return Stepped::Poll,
+            // `death.c`'s two — and the only body that creates a task while
+            // a run is going, so the only one asked whether it did.
+            Self::Death(b) => {
+                let stepped = b.step(k, s);
+                return if s.spawn.is_some() {
+                    Stepped::Spawned(stepped)
+                } else {
+                    Stepped::Ran(stepped)
+                };
+            }
             Self::Idle(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),
             Self::Dynamic(b) => b.step(k, s),
             Self::PollQ(b) => b.step(k, s),
             Self::AbortDelay(b) => b.step(k, s),
-            Self::Death(b) => b.step(k, s),
             Self::BlockQ(b) => b.step(k, s),
             Self::SemTest(b) => b.step(k, s),
             Self::CountSem(b) => b.step(k, s),
@@ -770,10 +790,13 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             // An `async` body reaches the kernel through the same cell, so it
             // must be polled with no borrow outstanding. `step` says which
             // ones those are, out of the dispatch it was making anyway.
-            let Some(step) = body.step(&mut k, &mut s) else {
-                drop(s);
-                drop(k);
-                return body.poll_once();
+            let step = match body.step(&mut k, &mut s) {
+                Stepped::Ran(step) | Stepped::Spawned(step) => step,
+                Stepped::Poll => {
+                    drop(s);
+                    drop(k);
+                    return body.poll_once();
+                }
             };
             // A body that created a task leaves the handle here; this is the
             // only path by which `bodies` gains an entry after the run
@@ -862,30 +885,30 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                     let Some(body) = bodies.get_mut(index) else {
                         break 'step Step::Finish(false);
                     };
-                    let Some(stepped) = body.step(&mut k, &mut s) else {
+                    match body.step(&mut k, &mut s) {
+                        Stepped::Ran(stepped) => stepped,
+                        // The handle the creator left behind; this is the
+                        // only path by which `bodies` gains an entry after
+                        // the run started.
+                        Stepped::Spawned(stepped) => {
+                            if let Some((task, spawned)) = s.spawn.take() {
+                                if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
+                                    *slot = Body::Death(spawned);
+                                }
+                            }
+                            stepped
+                        }
                         // A future: it reaches the kernel through the cell
                         // this loop is holding, so let go and poll it.
-                        drop(k);
-                        drop(s);
-                        let polled = body.poll_once();
-                        k = kernel.borrow_mut();
-                        s = shared.borrow_mut();
-                        break 'step polled;
-                    };
-                    // A body that created a task leaves the handle here; read
-                    // inside the borrow that is already open, and `take()`
-                    // only when there is something to take.
-                    let spawned = if s.spawn.is_some() {
-                        s.spawn.take()
-                    } else {
-                        None
-                    };
-                    if let Some((task, spawned)) = spawned {
-                        if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
-                            *slot = Body::Death(spawned);
+                        Stepped::Poll => {
+                            drop(k);
+                            drop(s);
+                            let polled = body.poll_once();
+                            k = kernel.borrow_mut();
+                            s = shared.borrow_mut();
+                            polled
                         }
                     }
-                    stepped
                 };
 
                 match step {
