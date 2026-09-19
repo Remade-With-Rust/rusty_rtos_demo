@@ -177,6 +177,16 @@ pub(crate) enum Stepped {
     Poll,
     /// It took a step.
     Ran(Step),
+    /// It took a step, and that step made no kernel call.
+    ///
+    /// A debt is created in exactly two places -- `owe`, from inside a
+    /// kernel call, and `begin_unwind`, from a context switch, which is also
+    /// inside one. So a step that called nothing cannot have created one,
+    /// cannot have raised a tick, and cannot have been preempted: if nothing
+    /// was owed going in, nothing is owed coming out, and the runner can skip
+    /// asking. Claiming this wrongly leaves a debt unpaid, which the
+    /// conformance differential shows as a missing trace line.
+    Quiet(Step),
     /// It took a step, and left a task for the runner to adopt.
     Spawned(Step),
 }
@@ -454,7 +464,9 @@ impl Body<'_> {
             Self::PollQ(b) => b.step(k, s),
             Self::AbortDelay(b) => b.step(k, s),
             Self::BlockQ(b) => b.step(k, s),
-            Self::SemTest(b) => b.step(k, s),
+            // Reports [`Stepped::Quiet`] for its counting loop, which is
+            // the one long run of steps in the corpus that calls nothing.
+            Self::SemTest(b) => return b.step(k, s),
             Self::CountSem(b) => b.step(k, s),
             Self::RecMutex(b) => b.step(k, s),
             Self::BlockTim(b) => b.step(k, s),
@@ -791,7 +803,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             // must be polled with no borrow outstanding. `step` says which
             // ones those are, out of the dispatch it was making anyway.
             let step = match body.step(&mut k, &mut s) {
-                Stepped::Ran(step) | Stepped::Spawned(step) => step,
+                Stepped::Ran(step) | Stepped::Quiet(step) | Stepped::Spawned(step) => step,
                 Stepped::Poll => {
                     drop(s);
                     drop(k);
@@ -870,6 +882,9 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             // of an increment and a compare. `steps` is recovered at the end
             // for the verdict.
             let mut left = step_limit;
+            // Whether the step just taken made no kernel call, and so cannot
+            // have left the kernel anything to settle. See [`Stepped::Quiet`].
+            let mut quiet = false;
             loop {
                 let Some(next) = left.checked_sub(1) else {
                     runaway = true;
@@ -878,15 +893,20 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                 left = next;
 
                 let step = 'step: {
-                    if k.resume_pending() {
+                    if !quiet && k.resume_pending() {
                         break 'step Step::Continue;
                     }
+                    quiet = false;
                     let index = usize::from(k.current().index());
                     let Some(body) = bodies.get_mut(index) else {
                         break 'step Step::Finish(false);
                     };
                     match body.step(&mut k, &mut s) {
                         Stepped::Ran(stepped) => stepped,
+                        Stepped::Quiet(stepped) => {
+                            quiet = true;
+                            stepped
+                        }
                         // The handle the creator left behind; this is the
                         // only path by which `bodies` gains an entry after
                         // the run started.
