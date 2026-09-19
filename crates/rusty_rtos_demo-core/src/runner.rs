@@ -824,7 +824,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
     /// The limit is the runaway guard the first oracle run taught us to
     /// want: an 8 GB trace is not a diagnosis.
     pub fn run(&mut self, step_limit: u64) -> Verdict {
-        let mut steps: u64 = 0;
+        let steps: u64;
         let mut pass = false;
         let mut runaway = false;
         {
@@ -842,12 +842,17 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             // free. Everything below happens in the order `step_once` does it.
             let mut k = kernel.borrow_mut();
             let mut s = shared.borrow_mut();
+            // Counting down rather than up: the decrement sets the flag the
+            // test reads, so the limit costs one instruction a step instead
+            // of an increment and a compare. `steps` is recovered at the end
+            // for the verdict.
+            let mut left = step_limit;
             loop {
-                if steps >= step_limit {
+                let Some(next) = left.checked_sub(1) else {
                     runaway = true;
                     break;
-                }
-                steps = steps.wrapping_add(1);
+                };
+                left = next;
 
                 let step = 'step: {
                     if k.resume_pending() {
@@ -891,6 +896,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                     }
                 }
             }
+            steps = step_limit.wrapping_sub(left);
         }
         self.verdict(steps, pass, runaway)
     }
