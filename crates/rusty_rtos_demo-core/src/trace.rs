@@ -122,6 +122,18 @@ impl<W: fmt::Write> LineTrace<W> {
         }
     }
 
+    /// Write an `i64` in decimal, sign included.
+    ///
+    /// `command` is signed, and `Display` would print a minus for a negative.
+    /// `unsigned_abs` is used rather than negating, so i64::MIN is not a
+    /// special case.
+    fn inum(&mut self, value: i64) {
+        if value < 0 {
+            self.raw("-");
+        }
+        self.num(value.unsigned_abs());
+    }
+
     /// Write a string through, recording a writer failure the way the rest of
     /// this printer does.
     fn raw(&mut self, text: &str) {
@@ -149,14 +161,6 @@ impl<W: fmt::Write> LineTrace<W> {
         self.raw(name);
         self.raw(" ");
         self.raw(arg);
-        self.lines = self.lines.wrapping_add(1);
-    }
-
-    fn write_line(&mut self, args: fmt::Arguments<'_>) {
-        if self.out.write_fmt(args).is_err() {
-            self.failed = true;
-            return;
-        }
         self.lines = self.lines.wrapping_add(1);
     }
 
@@ -401,13 +405,24 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 value,
                 ..
             } => {
-                self.write_line(format_args!("{tick} {name} {task} {command} {value}"));
+                self.head(tick, name);
+                self.raw(" ");
+                self.raw(task);
+                self.raw(" ");
+                self.inum(i64::from(command));
+                self.raw(" ");
+                self.num(value);
+                self.done();
                 self.end_line();
             }
             // The event set is `#[non_exhaustive]`: a variant this sink has
             // not learned prints its name alone rather than vanishing, so a
             // diff shows a wrong line instead of a missing one.
-            _ => self.write_line(format_args!("{tick} {name}\n")),
+            _ => {
+                self.head(tick, name);
+                self.raw("\n");
+                self.done();
+            }
         }
     }
 }
