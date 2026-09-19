@@ -740,20 +740,24 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             bodies,
             shared,
         } = self;
-        if kernel.borrow_mut().resume_pending() {
+        // One borrow, held across everything that does not need the cell
+        // free. Picking the body reads `bodies`, which is a different field,
+        // so the only arm that has to give the borrow up is the async one.
+        let mut k = kernel.borrow_mut();
+        if k.resume_pending() {
             return Step::Continue;
         }
-        let index = usize::from(kernel.borrow().current().index());
+        let index = usize::from(k.current().index());
         let Some(body) = bodies.get_mut(index) else {
             return Step::Finish(false);
         };
         // An `async` body reaches the kernel through the same cell, so it
         // must be polled with no borrow outstanding.
         if matches!(body, Body::Async(_)) {
+            drop(k);
             return body.poll_once();
         }
         let (step, spawned) = {
-            let mut k = kernel.borrow_mut();
             let mut s = shared.borrow_mut();
             let step = body.step(&mut k, &mut s);
             // A body that created a task leaves the handle here; this is the
