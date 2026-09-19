@@ -409,12 +409,23 @@ impl Body<'_> {
         }
     }
 
-    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
-        match self {
+    /// One step of this body, or `None` if it is a future and has to be
+    /// polled instead.
+    ///
+    /// The caller used to ask `matches!(self, Body::Async(_))` before calling
+    /// this, which read the discriminant a second time to answer what the
+    /// table below was about to answer anyway.
+    pub(crate) fn step<W: fmt::Write>(
+        &mut self,
+        k: &mut SimKernel<W>,
+        s: &mut Shared,
+    ) -> Option<Step> {
+        Some(match self {
             Self::Empty => Step::Finish(false),
-            // Reached only through `poll_once`, which the runner calls
-            // instead of this when it sees one.
-            Self::Async(_) => Step::Finish(false),
+            // An `async` body reaches the kernel through the same cell that
+            // is borrowed to get here, so it cannot be stepped from inside
+            // that borrow. The caller drops it and polls.
+            Self::Async(_) => return None,
             Self::Idle(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),
@@ -440,7 +451,7 @@ impl Body<'_> {
             Self::MbAmpCoreA(b) => b.step(k, s),
             Self::MbAmpCoreB(b) => b.step(k, s),
             Self::PollQTyped(b) => b.step(k, s),
-        }
+        })
     }
 }
 
@@ -754,15 +765,16 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         let Some(body) = bodies.get_mut(index) else {
             return Step::Finish(false);
         };
-        // An `async` body reaches the kernel through the same cell, so it
-        // must be polled with no borrow outstanding.
-        if matches!(body, Body::Async(_)) {
-            drop(k);
-            return body.poll_once();
-        }
         let (step, spawned) = {
             let mut s = shared.borrow_mut();
-            let step = body.step(&mut k, &mut s);
+            // An `async` body reaches the kernel through the same cell, so it
+            // must be polled with no borrow outstanding. `step` says which
+            // ones those are, out of the dispatch it was making anyway.
+            let Some(step) = body.step(&mut k, &mut s) else {
+                drop(s);
+                drop(k);
+                return body.poll_once();
+            };
             // A body that created a task leaves the handle here; this is the
             // only path by which `bodies` gains an entry after the run
             // started. Read inside the borrow that is already open: this used
@@ -845,15 +857,16 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                     let Some(body) = bodies.get_mut(index) else {
                         break 'step Step::Finish(false);
                     };
-                    if matches!(body, Body::Async(_)) {
+                    let Some(stepped) = body.step(&mut k, &mut s) else {
+                        // A future: it reaches the kernel through the cell
+                        // this loop is holding, so let go and poll it.
                         drop(k);
                         drop(s);
                         let polled = body.poll_once();
                         k = kernel.borrow_mut();
                         s = shared.borrow_mut();
                         break 'step polled;
-                    }
-                    let stepped = body.step(&mut k, &mut s);
+                    };
                     // A body that created a task leaves the handle here; read
                     // inside the borrow that is already open, and `take()`
                     // only when there is something to take.
