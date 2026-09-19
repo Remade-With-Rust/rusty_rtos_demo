@@ -193,13 +193,26 @@ impl<W: fmt::Write> LineTrace<W> {
     /// Every printer above ends its line with this, so the debug column
     /// goes on exactly once and the newline is never forgotten.
     fn end_line(&mut self) {
-        let result = if self.debug_exits {
-            let exits = self.exits;
-            self.out.write_fmt(format_args!(" #{exits}\n"))
-        } else {
-            self.out.write_str("\n")
-        };
-        if result.is_err() {
+        if self.debug_exits {
+            self.end_line_with_exits();
+            return;
+        }
+        if self.out.write_str("\n").is_err() {
+            self.failed = true;
+        }
+    }
+
+    /// The ` #<exits>` column, for a side-by-side conformance session.
+    ///
+    /// Out of line because `format_args!` builds an `Arguments` on the
+    /// stack, and inlining that here put it in the frame of every line
+    /// the trace writes -- for a column that is off unless somebody has
+    /// asked for it.
+    #[cold]
+    #[inline(never)]
+    fn end_line_with_exits(&mut self) {
+        let exits = self.exits;
+        if self.out.write_fmt(format_args!(" #{exits}\n")).is_err() {
             self.failed = true;
         }
     }
