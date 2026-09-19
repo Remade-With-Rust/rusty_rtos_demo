@@ -815,17 +815,67 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         let mut steps: u64 = 0;
         let mut pass = false;
         let mut runaway = false;
-        loop {
-            if steps >= step_limit {
-                runaway = true;
-                break;
-            }
-            steps = steps.wrapping_add(1);
-            match self.step_once() {
-                Step::Continue => {}
-                Step::Finish(verdict) => {
-                    pass = verdict;
+        {
+            let Self {
+                kernel,
+                bodies,
+                shared,
+            } = self;
+            // One pair of borrows for the whole run rather than one pair per
+            // step. [`Runner::step_once`] gives them back on every call
+            // because a conformance session drives it by hand and has to be
+            // able to reach the cells between steps; this loop does not stop,
+            // so it does not have to let go -- except around an `async` body,
+            // which reaches the kernel through the same cell and must find it
+            // free. Everything below happens in the order `step_once` does it.
+            let mut k = kernel.borrow_mut();
+            let mut s = shared.borrow_mut();
+            loop {
+                if steps >= step_limit {
+                    runaway = true;
                     break;
+                }
+                steps = steps.wrapping_add(1);
+
+                let step = 'step: {
+                    if k.resume_pending() {
+                        break 'step Step::Continue;
+                    }
+                    let index = usize::from(k.current().index());
+                    let Some(body) = bodies.get_mut(index) else {
+                        break 'step Step::Finish(false);
+                    };
+                    if matches!(body, Body::Async(_)) {
+                        drop(k);
+                        drop(s);
+                        let polled = body.poll_once();
+                        k = kernel.borrow_mut();
+                        s = shared.borrow_mut();
+                        break 'step polled;
+                    }
+                    let stepped = body.step(&mut k, &mut s);
+                    // A body that created a task leaves the handle here; read
+                    // inside the borrow that is already open, and `take()`
+                    // only when there is something to take.
+                    let spawned = if s.spawn.is_some() {
+                        s.spawn.take()
+                    } else {
+                        None
+                    };
+                    if let Some((task, spawned)) = spawned {
+                        if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
+                            *slot = Body::Death(spawned);
+                        }
+                    }
+                    stepped
+                };
+
+                match step {
+                    Step::Continue => {}
+                    Step::Finish(verdict) => {
+                        pass = verdict;
+                        break;
+                    }
                 }
             }
         }
