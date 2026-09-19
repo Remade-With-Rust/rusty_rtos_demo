@@ -136,6 +136,7 @@ pub struct Body {
 }
 
 impl Body {
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         let runner::State::QOverwrite(s) = &mut s.state else {
             return Step::Finish(false);

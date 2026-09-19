@@ -118,6 +118,7 @@ pub enum Body {
 }
 
 impl Body {
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self {
             Self::Creator(b) => b.step(k, s),

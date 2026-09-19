@@ -453,6 +453,7 @@ pub struct Idle {
 }
 
 impl Idle {
+    #[inline(never)]
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>) -> Step {
         match self.pc {
             0 => {
@@ -490,6 +491,7 @@ pub struct Timer {
 }
 
 impl Timer {
+    #[inline(never)]
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self.pc {
             // xNextExpireTime = prvGetNextExpireTime( &xListWasEmpty );
@@ -575,6 +577,7 @@ impl Check {
     /// The C `harnessCHECK_TASK_PRIORITY`.
     pub const PRIORITY: u8 = 5;
 
+    #[inline(never)]
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         match self.pc {
             0 => {

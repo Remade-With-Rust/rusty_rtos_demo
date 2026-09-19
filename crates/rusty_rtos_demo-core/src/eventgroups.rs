@@ -202,6 +202,7 @@ pub struct Master {
 
 impl Master {
     #[allow(clippy::too_many_lines)]
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         let s = state!(s);
         match self.pc {
@@ -651,6 +652,7 @@ pub struct Slave {
 }
 
 impl Slave {
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         let s = state!(s);
         let max = SimKernel::<W>::MAX_DELAY;
@@ -836,6 +838,7 @@ impl Sync {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
         let s = state!(s);
         let max = SimKernel::<W>::MAX_DELAY;

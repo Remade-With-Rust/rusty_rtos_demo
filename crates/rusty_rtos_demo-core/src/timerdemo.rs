@@ -411,6 +411,7 @@ pub struct Body {
 }
 
 impl Body {
+    #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, _s: &mut Shared) -> Step {
         match self.pc {
             // xOneShotTimer = xTimerCreate( "Oneshot Timer", ... );
