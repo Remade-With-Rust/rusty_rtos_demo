@@ -752,14 +752,23 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         if matches!(body, Body::Async(_)) {
             return body.poll_once();
         }
-        let step = {
+        let (step, spawned) = {
             let mut k = kernel.borrow_mut();
             let mut s = shared.borrow_mut();
-            body.step(&mut k, &mut s)
+            let step = body.step(&mut k, &mut s);
+            // A body that created a task leaves the handle here; this is the
+            // only path by which `bodies` gains an entry after the run
+            // started. Read inside the borrow that is already open: this used
+            // to re-borrow `shared` a SECOND time on every step, and
+            // `take()` writes `None` back even when the slot is empty, which
+            // it almost always is.
+            let spawned = if s.spawn.is_some() {
+                s.spawn.take()
+            } else {
+                None
+            };
+            (step, spawned)
         };
-        // A body that created a task leaves the handle here; this is the
-        // only path by which `bodies` gains an entry after the run started.
-        let spawned = shared.borrow_mut().spawn.take();
         if let Some((task, spawned)) = spawned {
             if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
                 *slot = Body::Death(spawned);
