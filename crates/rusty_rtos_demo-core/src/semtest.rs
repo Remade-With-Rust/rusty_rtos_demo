@@ -91,33 +91,31 @@ impl Body {
         // for( ulCounter = 0; ulCounter <= ulExpectedValue; ulCounter++ )
         //     { *pulSharedVariable = ulCounter; if( ... != ulCounter ) sError = pdTRUE; }
         //
-        // Pure computation: no kernel call, so no critical section, so no
-        // tick — on either side. The loop is long on purpose, and the
-        // switches that do happen come from the *other* tasks.
+        // ONE state, where the rest of this body gives a statement each.
         //
-        // It is also very nearly every step this body takes, so it is tested
-        // for rather than jumped to: a nine-way table charges all nine states
-        // the same six instructions, where three compares reach these three
-        // in one, two and three.
+        // Splitting a C statement across steps buys the corpus somewhere for
+        // a preemption to land. This loop has nowhere to offer: it makes no
+        // kernel call, so it leaves no critical section, so it raises no tick
+        // — and a tick is the only thing that moves the sim's scheduler. The
+        // C is uninterrupted here for the same reason. Three states would be
+        // three chances for nothing to happen, on 96.5% of the steps the
+        // corpus takes.
+        //
+        // It is also nearly every step this body takes, so it is tested for
+        // rather than jumped to: the table for the states either side is out
+        // of line behind one compare.
         match self.pc {
             3 => {
                 if let Some(cell) = s.shared.get_mut(self.shared) {
                     *cell = self.counter;
                 }
-                self.pc = 4;
-            }
-            4 => {
                 if s.shared.get(self.shared).copied() != Some(self.counter) {
                     self.error = true;
                 }
-                self.pc = 5;
-            }
-            5 => {
                 if self.counter >= self.expected {
-                    self.pc = 6;
+                    self.pc = 4;
                 } else {
                     self.counter = self.counter.wrapping_add(1);
-                    self.pc = 3;
                 }
             }
             _ => self.step_cycle(k, s),
@@ -125,7 +123,7 @@ impl Body {
         Step::Continue
     }
 
-    /// The six states either side of the counting loop, which run once per
+    /// The states either side of the counting loop, which run once per
     /// semaphore cycle rather than once per count.
     ///
     /// Out of line so the loop above neither jumps through their table nor
@@ -147,15 +145,15 @@ impl Body {
                 self.pc = 3;
             }
             // if( xSemaphoreGive( xSemaphore ) == pdFALSE ) { sError = pdTRUE; }
-            6 => self.give(k),
+            4 => self.give(k),
             // if( sError == pdFALSE ) { sCheckVariables[ sCheckVariableToUse ]++; }
-            7 => {
+            5 => {
                 if !self.error && self.check_slot < NUM_TASKS {
                     if let Some(cell) = s.check.get_mut(self.check_slot) {
                         *cell = cell.wrapping_add(1);
                     }
                 }
-                self.pc = 8;
+                self.pc = 6;
             }
             // if( xBlockTime != 0 ) { vTaskDelay( xBlockTime * semtstDELAY_FACTOR ); }
             _ => self.wait_out(k),
@@ -199,7 +197,7 @@ impl Body {
         if !matches!(k.semaphore_give(self.semaphore), Ok(Wait::Ready(()))) {
             self.error = true;
         }
-        self.pc = 7;
+        self.pc = 5;
     }
 
     /// `if( xBlockTime != 0 ) { vTaskDelay( xBlockTime * semtstDELAY_FACTOR ); }`
