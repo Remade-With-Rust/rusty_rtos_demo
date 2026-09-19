@@ -127,9 +127,10 @@ impl Body {
     /// The states either side of the counting loop, which run once per
     /// semaphore cycle rather than once per count.
     ///
-    /// Out of line so the loop above neither jumps through their table nor
-    /// carries their frame.
-    #[inline(never)]
+    /// Left to the compiler's judgement. It was `#[inline(never)]` while the
+    /// counting loop was four thousand steps and this table was the cold
+    /// half; now the loop is one step and this is six of the body's seven,
+    /// so the outline no longer earns its call.
     fn step_cycle<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) {
         match self.pc {
             // portENTER_CRITICAL(); sCheckVariableToUse = sNextCheckVariable;
