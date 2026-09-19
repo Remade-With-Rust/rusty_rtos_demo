@@ -885,6 +885,10 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             // Whether the step just taken made no kernel call, and so cannot
             // have left the kernel anything to settle. See [`Stepped::Quiet`].
             let mut quiet = false;
+            // The index of the body stepped last. A quiet step made no kernel
+            // call, so it cannot have switched the task either -- the index
+            // it found is still the right one.
+            let mut at = 0usize;
             loop {
                 let Some(next) = left.checked_sub(1) else {
                     runaway = true;
@@ -893,12 +897,14 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                 left = next;
 
                 let step = 'step: {
-                    if !quiet && k.resume_pending() {
-                        break 'step Step::Continue;
+                    if !quiet {
+                        if k.resume_pending() {
+                            break 'step Step::Continue;
+                        }
+                        at = usize::from(k.current().index());
                     }
                     quiet = false;
-                    let index = usize::from(k.current().index());
-                    let Some(body) = bodies.get_mut(index) else {
+                    let Some(body) = bodies.get_mut(at) else {
                         break 'step Step::Finish(false);
                     };
                     match body.step(&mut k, &mut s) {
