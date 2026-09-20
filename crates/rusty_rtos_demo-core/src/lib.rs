@@ -37,6 +37,7 @@
 //! | [`qsetpoll`] | `QueueSetPolling.c` | a queue set polled by a task, written by an interrupt |
 //! | [`intsem`] | `IntSemTest.c` | semaphores and a mutex given from an interrupt |
 //! | [`sbint`] | `StreamBufferInterrupt.c` | a string streamed from the tick, byte by byte |
+//! | [`tasknotify`] | `TaskNotify.c` | every notification method, and a notify to a suspended task |
 //! | [`timerdemo`] | `TimerDemo.c` | software timers, checked against the tick they fire on |
 //!
 //! The other eight scenarios of the K1 corpus follow the same shape and
@@ -63,6 +64,7 @@ pub mod recmutex;
 pub mod runner;
 pub mod sbint;
 pub mod semtest;
+pub mod tasknotify;
 pub mod timerdemo;
 pub mod trace;
 
@@ -130,6 +132,8 @@ pub enum Scenario {
     IntSem,
     /// `StreamBufferInterrupt.c`.
     SbInt,
+    /// `TaskNotify.c`.
+    TaskNotify,
     /// `TimerDemo.c`.
     TimerDemo,
     /// `EventGroupsDemo.c`.
@@ -164,6 +168,7 @@ impl Scenario {
             Self::QSetPoll => "QueueSetPolling",
             Self::IntSem => "IntSemTest",
             Self::SbInt => "StreamBufferInterrupt",
+            Self::TaskNotify => "TaskNotify",
             Self::TimerDemo => "TimerDemo",
             Self::EventGroups => "EventGroupsDemo",
             Self::MbAmp => "MessageBufferAMP",
@@ -191,6 +196,7 @@ impl Scenario {
             "QueueSetPolling" => Some(Self::QSetPoll),
             "IntSemTest" => Some(Self::IntSem),
             "StreamBufferInterrupt" => Some(Self::SbInt),
+            "TaskNotify" => Some(Self::TaskNotify),
             "TimerDemo" => Some(Self::TimerDemo),
             "EventGroupsDemo" => Some(Self::EventGroups),
             "MessageBufferAMP" => Some(Self::MbAmp),
@@ -217,6 +223,7 @@ impl Scenario {
             Self::QSetPoll,
             Self::IntSem,
             Self::SbInt,
+            Self::TaskNotify,
             Self::TimerDemo,
             Self::EventGroups,
             Self::MbAmp,

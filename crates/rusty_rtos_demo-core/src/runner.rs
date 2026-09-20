@@ -39,7 +39,8 @@ use rusty_rtos_port::SimPort;
 use crate::trace::LineTrace;
 use crate::{
     abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify,
+    timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -111,6 +112,8 @@ pub enum TickIsr {
     IntSem(intsem::Isr),
     /// `vBasicStreamBufferSendFromISR`.
     StreamBufferInterrupt(sbint::Isr),
+    /// `xNotifyTaskFromISR`, and the two timer callbacks with it.
+    TaskNotify(tasknotify::Isr),
     /// `vTimerPeriodicISRTests`, and the four timer callbacks with it.
     TimerDemo(timerdemo::Isr),
     /// `vPeriodicEventGroupsProcessing`.
@@ -130,6 +133,9 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
         if matches!(kernel.tick_hook(), Self::TimerDemo(_)) {
             timerdemo::timer_callback(kernel, timer, callback);
         }
+        if matches!(kernel.tick_hook(), Self::TaskNotify(_)) {
+            tasknotify::timer_callback(kernel, callback);
+        }
     }
 
     fn tick(self, kernel: &mut SimKernel<W>) -> Self {
@@ -139,6 +145,7 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::QueueSetPolling(isr) => Self::QueueSetPolling(isr.tick(kernel)),
             Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
             Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
+            Self::TaskNotify(isr) => Self::TaskNotify(isr.tick(kernel)),
             Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
             Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
             Self::MessageBufferAmp(_) => self,
@@ -228,6 +235,8 @@ pub enum State {
     IntSem(intsem::State),
     /// `StreamBufferInterrupt.c`.
     SbInt(sbint::State),
+    /// `TaskNotify.c`.
+    TaskNotify(tasknotify::State),
     /// `TimerDemo.c`.
     TimerDemo(timerdemo::State),
     /// `EventGroupsDemo.c`.
@@ -281,6 +290,9 @@ impl Shared {
         if let (State::EventGroups(s), TickIsr::EventGroups(isr)) = (&mut self.state, isr) {
             return s.still_running(isr);
         }
+        if let (State::TaskNotify(s), TickIsr::TaskNotify(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -307,6 +319,9 @@ impl Shared {
             State::QSetPoll(s) => s.still_running(),
             State::IntSem(s) => s.still_running(),
             State::SbInt(s) => s.still_running(),
+            // Reached only when the hook is not the matching one, which
+            // means the interrupt half never ran.
+            State::TaskNotify(s) => s.still_running(tasknotify::Isr::default()),
             // Reached only when the hook is not the matching one.
             State::TimerDemo(s) => s.still_running(timerdemo::Isr::default(), Check::PERIOD),
             // As above.
@@ -373,6 +388,8 @@ pub enum Body<'a> {
     IntSem(intsem::Body),
     /// `StreamBufferInterrupt.c`'s one.
     SbInt(sbint::Body),
+    /// `TaskNotify.c`'s one.
+    TaskNotify(tasknotify::Body),
     /// `TimerDemo.c`'s one.
     TimerDemo(timerdemo::Body),
     /// `EventGroupsDemo.c`'s master.
@@ -464,6 +481,7 @@ impl Body<'_> {
             Self::QSetPoll(b) => b.step(k, s),
             Self::IntSem(b) => b.step(k, s),
             Self::SbInt(b) => b.step(k, s),
+            Self::TaskNotify(b) => b.step(k, s),
             Self::TimerDemo(b) => b.step(k, s),
             Self::EventGroupsMaster(b) => b.step(k, s),
             Self::EventGroupsSlave(b) => b.step(k, s),

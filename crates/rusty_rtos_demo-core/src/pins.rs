@@ -29,7 +29,7 @@ use rusty_rtos_core::error::Result;
 use crate::runner::Runner;
 use crate::{
     blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
-    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, timerdemo,
+    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify, timerdemo,
 };
 
 /// The DEFAULT length of a pinned run. The check task ends the run at the
@@ -40,7 +40,7 @@ use crate::{
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 18;
+pub const COUNT: usize = 19;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -283,6 +283,17 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             lines: 2273,
             digest: 0xfd91_ee4f_e21d_dd17,
             bytes: 66_145,
+        },
+        Pin {
+            name: "TaskNotify",
+            start: tasknotify::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2001,
+            yields: 227,
+            exits: 2845,
+            lines: 3518,
+            digest: 0x54c5_765b_0638_11ef,
+            bytes: 105_221,
         },
         Pin {
             name: "TimerDemo",
