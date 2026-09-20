@@ -3,7 +3,7 @@
 //! Three things check the Rust kernel against these numbers — the host's
 //! `tests/conformance.rs`, the Cortex-M3 cell and the RV32 cell — and for
 //! a while each carried its own copy of the table. Three hand-written
-//! copies of seventeen rows of hex is a drift waiting to happen, and a
+//! copies of twenty rows of hex is a drift waiting to happen, and a
 //! cell that silently disagrees with the host is worse than no cell: it
 //! reports PASS against numbers nobody is comparing.
 //!
@@ -28,8 +28,9 @@ use rusty_rtos_core::error::Result;
 
 use crate::runner::Runner;
 use crate::{
-    blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp, pollq,
-    pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify, timerdemo,
+    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
+    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify,
+    timerdemo,
 };
 
 /// The DEFAULT length of a pinned run. The check task ends the run at the
@@ -40,7 +41,7 @@ use crate::{
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 19;
+pub const COUNT: usize = 20;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -151,6 +152,17 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             lines: 24402,
             digest: 0x6bee_a9f4_66e5_1e2d,
             bytes: 757_383,
+        },
+        Pin {
+            name: "AbortDelay",
+            start: abortdelay::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2000,
+            yields: 86,
+            exits: 2198,
+            lines: 2548,
+            digest: 0x54b8_aee9_7f55_5577,
+            bytes: 74_868,
         },
         Pin {
             name: "PollQ",
@@ -314,8 +326,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 4991,
             exits: 16_577,
             lines: 24_157,
-            digest: 0xfffc_9266_b473_a8f0,
-            bytes: 702_507,
+            digest: 0x8951_8b1d_73e2_6404,
+            bytes: 707_007,
         },
         Pin {
             name: "MessageBufferAMP",

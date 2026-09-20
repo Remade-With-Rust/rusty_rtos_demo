@@ -14,23 +14,38 @@
 //! The ordinal is read straight off the handle: a handle's index is its
 //! creation order, so the two sides agree without either keeping a table.
 //!
-//! **That equivalence is not exact, and `AbortDelay` is where it shows.**
-//! The C harness keys its ordinal on the object's ADDRESS
-//! (`prvOrdinalPerKind` searches a table of pointers): a freed object
-//! leaves its entry behind, so a new object gets a NEW ordinal unless the
-//! allocator hands back the same block. Our arena reuses a freed INDEX.
-//! The two agree whenever the recreated object is the same size — which is
-//! every scenario in the corpus that deletes, `EventGroupsDemo`'s
-//! same-size groups included — and part when it is not: `AbortDelay`
-//! deletes a binary semaphore and creates a 1-item queue, `malloc` returns
-//! a different block, and the C says `q3` where our index says `q2`.
+//! # Identity is CREATION ORDER, and that took two goes to get right
 //!
-//! A running count was tried and reverted. It makes `AbortDelay` identical
-//! for all 2,549 lines and breaks `EventGroupsDemo`, whose C ordinals reuse
-//! precisely because its addresses do. Neither rule is right, because the
-//! subject identity in the contract is an allocator address. The index rule
-//! is kept because it is the one that matches seventeen scenarios; the
-//! eighteenth is an owner decision recorded in the ledger.
+//! The ordinal used to be read straight off the handle -- a handle's index
+//! is its arena slot -- and the C harness keyed its own ordinal on the
+//! object's ADDRESS, counting position among the same-kind pointers it had
+//! ever seen. Those are two different rules, and they agreed only where the
+//! allocator happened to behave like the arena. They disagreed in BOTH
+//! directions at once:
+//!
+//! * `EventGroupsDemo` deletes and recreates a same-sized group, `malloc`
+//!   hands back the same block, and the C said `g2` every time -- which the
+//!   arena's reused index matched.
+//! * `AbortDelay` deletes a binary semaphore and creates a 1-item queue,
+//!   `malloc` hands back a different block, and the C said `q3` where the
+//!   arena's reused index said `q2`.
+//!
+//! A running count was tried on this side alone and recorded as a dead end,
+//! because it fixed `AbortDelay` and broke `EventGroupsDemo`. That was the
+//! right measurement and the wrong conclusion: **no rule on one side can
+//! satisfy both**, because the disagreement is about an allocator the two
+//! kernels do not share. The fix had to change the CONTRACT, on both sides.
+//!
+//! So both sides now use a monotonic per-kind counter: the n-th object of a
+//! kind ever created is `<kind>n`, and an ordinal is never reused. That is
+//! strictly better evidence, not a workaround -- identity now depends only
+//! on CREATION ORDER, which is a thing the differential already proves
+//! identical line by line, instead of on a heap layout that was never
+//! checking anything about the kernel under test.
+//!
+//! It costs this sink a small table, because an ordinal assigned at
+//! creation has to be recoverable at every later event that names the
+//! object.
 //!
 //! Nothing here allocates: the sink writes through a [`fmt::Write`], which
 //! on the host is a stderr adapter and on a chip is a UART.
@@ -38,6 +53,22 @@
 use core::fmt;
 
 use rusty_rtos_core::trace::{Event, Trace};
+
+/// The three kinds of object the contract names by ordinal: queues (`q`),
+/// event groups (`g`) and stream buffers (`s`).
+const KINDS: usize = 3;
+const KIND_QUEUE: usize = 0;
+const KIND_GROUP: usize = 1;
+const KIND_BUFFER: usize = 2;
+
+/// How many arena slots of one kind this sink can name.
+///
+/// The corpus needs far fewer (`runner` declares 12 queues, 4 groups, 8
+/// buffers). It is sized for a firmware cell with a bigger geometry, so
+/// that an object past the end prints `<kind>0` -- which no real object
+/// gets -- rather than colliding with a live one. That is the same
+/// out-of-table behaviour the C harness has.
+const NAMED_SLOTS: usize = 64;
 
 /// A [`Trace`] that writes the contract's lines to `W`.
 #[derive(Debug)]
@@ -50,6 +81,12 @@ pub struct LineTrace<W: fmt::Write> {
     /// no such column, and a trace with one is not comparable.
     debug_exits: bool,
     exits: u64,
+    /// Slot -> ordinal, per kind. See the module documentation: this is
+    /// what makes an ordinal a function of creation ORDER rather than of
+    /// which arena slot the object happens to sit in.
+    ordinals: [[u32; NAMED_SLOTS]; KINDS],
+    /// How many objects of each kind have ever been created.
+    created: [u32; KINDS],
 }
 
 /// "00" through "99", so two decimal digits are a slice of a `str`
@@ -72,7 +109,42 @@ impl<W: fmt::Write> LineTrace<W> {
             failed: false,
             debug_exits: false,
             exits: 0,
+            ordinals: [[0; NAMED_SLOTS]; KINDS],
+            created: [0; KINDS],
         }
+    }
+
+    /// Give a newly created object the next ordinal of its kind, and
+    /// remember it against the arena slot so every later event naming that
+    /// object can find it again.
+    ///
+    /// A freed slot is reused by the arena, and the rebind here is what
+    /// stops the successor inheriting its predecessor's name.
+    fn bind(&mut self, kind: usize, index: u16) -> u32 {
+        let n = match self.created.get_mut(kind) {
+            Some(count) => {
+                *count = count.wrapping_add(1);
+                *count
+            }
+            None => return 0,
+        };
+        if let Some(slot) = self
+            .ordinals
+            .get_mut(kind)
+            .and_then(|k| k.get_mut(index as usize))
+        {
+            *slot = n;
+        }
+        n
+    }
+
+    /// The ordinal an object was given at creation.
+    fn ordinal(&self, kind: usize, index: u16) -> u32 {
+        self.ordinals
+            .get(kind)
+            .and_then(|k| k.get(index as usize))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Add the ` #<exits>` column the C harness adds under
@@ -337,7 +409,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             // `<tick> <EVENT> q<n> <length>`
             Event::QueueCreate { queue, length, .. } => {
-                let n = ordinal(queue.index());
+                let n = self.bind(KIND_QUEUE, queue.index());
                 self.head(tick, name);
                 self.raw(" q");
                 self.num(u64::from(n));
@@ -357,7 +429,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::BlockingOnQueueSend { queue, .. }
             | Event::BlockingOnQueueReceive { queue, .. }
             | Event::BlockingOnQueuePeek { queue, .. } => {
-                let n = ordinal(queue.index());
+                let n = self.ordinal(KIND_QUEUE, queue.index());
                 self.num(tick);
                 self.raw(" ");
                 self.raw(name);
@@ -368,7 +440,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             // `<tick> <EVENT> g<n> [<arg>...]`
             Event::EventGroupCreate { group } => {
-                let n = ordinal(group.index());
+                let n = self.bind(KIND_GROUP, group.index());
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -376,7 +448,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.end_line();
             }
             Event::EventGroupSetBits { group, bits } => {
-                let n = ordinal(group.index());
+                let n = self.ordinal(KIND_GROUP, group.index());
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -386,7 +458,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.end_line();
             }
             Event::EventGroupWaitBitsBlock { group, bits } => {
-                let n = ordinal(group.index());
+                let n = self.ordinal(KIND_GROUP, group.index());
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -400,7 +472,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 bits,
                 timed_out,
             } => {
-                let n = ordinal(group.index());
+                let n = self.ordinal(KIND_GROUP, group.index());
                 let t = u8::from(timed_out);
                 self.head(tick, name);
                 self.raw(" g");
@@ -417,7 +489,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 buffer,
                 is_message_buffer,
             } => {
-                let n = ordinal(buffer.index());
+                let n = self.bind(KIND_BUFFER, buffer.index());
                 let m = u8::from(is_message_buffer);
                 self.head(tick, name);
                 self.raw(" s");
@@ -429,7 +501,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             Event::StreamBufferSend { buffer, bytes }
             | Event::StreamBufferReceive { buffer, bytes } => {
-                let n = ordinal(buffer.index());
+                let n = self.ordinal(KIND_BUFFER, buffer.index());
                 self.head(tick, name);
                 self.raw(" s");
                 self.num(u64::from(n));
@@ -464,9 +536,4 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
         }
     }
-}
-
-/// A handle's creation ordinal, 1-based, as the C harness numbers objects.
-const fn ordinal(index: u16) -> u32 {
-    (index as u32).wrapping_add(1)
 }

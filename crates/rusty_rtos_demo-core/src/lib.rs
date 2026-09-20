@@ -25,6 +25,7 @@
 //! | scenario | C file | what it tortures |
 //! |---|---|---|
 //! | [`dynamic`] | `dynamic.c` | suspend, resume, priority set, suspend-all |
+//! | [`abortdelay`] | `AbortDelay.c` | `xTaskAbortDelay` against every way a task can block |
 //! | [`pollq`] | `PollQ.c` | a queue polled from both ends, never blocking |
 //! | [`blockq`] | `BlockQ.c` | blocking sends and receives, three task pairs |
 //! | [`semtest`] | `semtest.c` | two binary semaphores guarding a shared variable |
@@ -40,8 +41,18 @@
 //! | [`tasknotify`] | `TaskNotify.c` | every notification method, and a notify to a suspended task |
 //! | [`timerdemo`] | `TimerDemo.c` | software timers, checked against the tick they fire on |
 //!
-//! The other eight scenarios of the K1 corpus follow the same shape and
-//! land as they are written; the plan's kill test is the whole nine.
+//! | [`eventgroups`] | `EventGroupsDemo.c` | event bits, a rendezvous, and the deferred-interrupt path |
+//! | [`mbamp`] | `MessageBufferAMP.c` | message buffers across a replaced send-completed seam |
+//! | [`death`] | `death.c` | tasks created and deleted while the scheduler runs |
+//!
+//! Plus [`pollq_typed`] and [`pollq_async`], which are `PollQ` rewritten
+//! against the Rust face and as `async fn` bodies, and diffed against
+//! `PollQ`'s own C oracle trace -- because the point is that the *same*
+//! trace comes out, so the face is proved to cost nothing rather than
+//! asserted to.
+//!
+//! Every one of them is in `kairos conform --all`, and nothing is excluded
+//! from it.
 
 pub mod abortdelay;
 pub mod blockq;
@@ -211,6 +222,7 @@ impl Scenario {
     pub const fn all() -> &'static [Self] {
         &[
             Self::Dynamic,
+            Self::AbortDelay,
             Self::PollQ,
             Self::BlockQ,
             Self::SemTest,
