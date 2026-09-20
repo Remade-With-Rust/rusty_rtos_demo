@@ -1,3 +1,15 @@
+//! # ⚠ This is a REGRESSION GATE, not an optimisation instrument
+//!
+//! Censused 2026-09-19: of its 119,462,960 instructions, **46.4% is
+//! `LineTrace<Digest>::event`** — formatting a trace line and hashing it —
+//! 5.2% is `str::from_utf8` re-validating task names, 2.6% is `memcpy`, and
+//! **about 6.9% is the kernel**.
+//!
+//! So a 10% kernel improvement moves this number by 0.7%, which is inside the
+//! noise a rebuild produces. Read it to prove a change did NOT move the
+//! corpus. For kernel speed work read `khot-ir`, `ksched-ir`, `kipc-ir` or
+//! `kobj-ir`, which use `CountTrace` and whose harness is 2.66% of the total.
+//!
 //! Instruction counts for the Kairos kernel, over the conformance corpus.
 //!
 //! This runs exactly what `every_scenario_reproduces_the_c_kernels_trace_and_counters`
