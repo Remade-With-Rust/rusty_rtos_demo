@@ -187,6 +187,36 @@ impl<W: fmt::Write> LineTrace<W> {
     /// `str` is already a `str`, so nothing is validated -- the first version
     /// built a byte buffer and then asked `from_utf8` to check digits it had
     /// just written, which the profile put at 20,122,806 instructions.
+    ///
+    /// In line because the CALL is a large part of what it costs: the line
+    /// census put the prologue at 3,067,188 instructions and the epilogue
+    /// at 3,578,386, against 511,198 calls in a 20,000-tick run.
+    ///
+    /// # The four probes this rests on
+    ///
+    /// `bench/sb-ir`, program totals, two instruments. `num` ALONE moves
+    /// them in opposite directions, which is the signature of one body
+    /// serving call sites that want different things:
+    ///
+    /// | probe | StreamBufferDemo | StreamBufferInterrupt | MessageBufferAMP |
+    /// |---|---|---|---|
+    /// | `num` only | -6,412,337 | **+52,517** | **+36,810** |
+    /// | `head` only | -3,134,650 | -601,898 | -604,886 |
+    /// | **both (this)** | **-8,888,722** | -38,517 | -56,018 |
+    /// | body/symbol split | -3,939,614 | -280,875 | -284,090 |
+    ///
+    /// The split is the textbook answer to an opposite-sign pair, and it
+    /// was built and measured: an `inline(always)` body that `head` takes
+    /// in line, behind an `inline(never)` handle for everyone else. It
+    /// works -- it beats `head` alone on `StreamBufferDemo` -- but it does
+    /// not DOMINATE, and inlining both wins more than twice as much on the
+    /// scenario this bench exists for while still costing no arm anything.
+    /// So both are in line, and the split is recorded rather than taken.
+    ///
+    /// (Without the `inline(never)`, the split measured byte-for-byte
+    /// identical to this row: the thin handle was itself inlined and
+    /// brought the body with it.)
+    #[inline(always)]
     fn num(&mut self, value: u64) {
         // At most ten two-digit groups in a `u64`.
         let mut groups = [0u8; 10];
@@ -241,6 +271,26 @@ impl<W: fmt::Write> LineTrace<W> {
     }
 
     /// `<tick> <NAME>`, which every line starts with.
+    ///
+    /// # Two things that look redundant here and are not
+    ///
+    /// A trace prints about twelve lines per tick -- 242,003 lines over
+    /// 20,002 distinct ticks -- so eleven calls in twelve divide the same
+    /// number down to the same digits. CACHING those digits in the sink
+    /// was built and measured, and it LOST on all six scenarios: 3,087,534
+    /// on `StreamBufferDemo`, 1,171,448 on `StreamBufferInterrupt`. Six
+    /// fields reached through `&mut self` at a site that is inlined into
+    /// every arm of `event` cost more than the division they replace.
+    ///
+    /// The same thing happened to `num`'s ten-byte scratch array: moving it
+    /// from a local into the sink, to stop it being zeroed on every call,
+    /// cost 1,022,407. State in the struct is not free here; recomputation
+    /// is cheaper than reaching for it.
+    ///
+    /// In line for the same reason as [`LineTrace::num`]: three statements
+    /// behind a call that the census priced at 2,258,508 instructions of
+    /// prologue and epilogue over 161,322 calls.
+    #[inline(always)]
     fn head(&mut self, tick: u64, name: &str) {
         self.num(tick);
         self.raw(" ");
@@ -253,6 +303,10 @@ impl<W: fmt::Write> LineTrace<W> {
     }
 
     /// `<tick> <NAME> <arg>` without the formatting machinery.
+    ///
+    /// No `inline` attribute: one was tried and measured -22 instructions
+    /// on `StreamBufferDemo`, which is the rebuild artifact. LLVM already
+    /// inlines this and `end_line`; saying so again buys nothing.
     fn line_tick_name_str(&mut self, tick: u64, name: &str, arg: &str) {
         self.num(tick);
         self.raw(" ");

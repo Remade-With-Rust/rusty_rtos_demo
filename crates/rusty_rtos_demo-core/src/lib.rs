@@ -38,6 +38,7 @@
 //! | [`qsetpoll`] | `QueueSetPolling.c` | a queue set polled by a task, written by an interrupt |
 //! | [`intsem`] | `IntSemTest.c` | semaphores and a mutex given from an interrupt |
 //! | [`sbint`] | `StreamBufferInterrupt.c` | a string streamed from the tick, byte by byte |
+//! | [`streambuffer`] | `StreamBufferDemo.c` | the whole stream-buffer face: two echo pairs, the head-and-tail tests, trigger levels |
 //! | [`tasknotify`] | `TaskNotify.c` | every notification method, and a notify to a suspended task |
 //! | [`timerdemo`] | `TimerDemo.c` | software timers, checked against the tick they fire on |
 //!
@@ -75,6 +76,7 @@ pub mod recmutex;
 pub mod runner;
 pub mod sbint;
 pub mod semtest;
+pub mod streambuffer;
 pub mod tasknotify;
 pub mod timerdemo;
 pub mod trace;
@@ -143,6 +145,8 @@ pub enum Scenario {
     IntSem,
     /// `StreamBufferInterrupt.c`.
     SbInt,
+    /// `StreamBufferDemo.c`.
+    StreamBuffer,
     /// `TaskNotify.c`.
     TaskNotify,
     /// `TimerDemo.c`.
@@ -179,6 +183,7 @@ impl Scenario {
             Self::QSetPoll => "QueueSetPolling",
             Self::IntSem => "IntSemTest",
             Self::SbInt => "StreamBufferInterrupt",
+            Self::StreamBuffer => "StreamBufferDemo",
             Self::TaskNotify => "TaskNotify",
             Self::TimerDemo => "TimerDemo",
             Self::EventGroups => "EventGroupsDemo",
@@ -207,6 +212,7 @@ impl Scenario {
             "QueueSetPolling" => Some(Self::QSetPoll),
             "IntSemTest" => Some(Self::IntSem),
             "StreamBufferInterrupt" => Some(Self::SbInt),
+            "StreamBufferDemo" => Some(Self::StreamBuffer),
             "TaskNotify" => Some(Self::TaskNotify),
             "TimerDemo" => Some(Self::TimerDemo),
             "EventGroupsDemo" => Some(Self::EventGroups),
@@ -235,6 +241,7 @@ impl Scenario {
             Self::QSetPoll,
             Self::IntSem,
             Self::SbInt,
+            Self::StreamBuffer,
             Self::TaskNotify,
             Self::TimerDemo,
             Self::EventGroups,

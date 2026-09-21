@@ -37,7 +37,7 @@ use core::fmt;
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::TaskHandle;
 
-use crate::runner::{self, Runner, Shared, SimKernel, Step};
+use crate::runner::{self, Runner, Shared, SimKernel, Spawn, Step};
 
 /// `harnessDEATH_PRIORITY`: the upstream Posix demo's
 /// `mainCREATOR_TASK_PRIORITY`, `tskIDLE_PRIORITY + 3`.
@@ -190,7 +190,7 @@ impl Creator {
                         if let runner::State::Death(state) = &mut s.state {
                             state.created_task = task;
                         }
-                        s.spawn = Some((task, Body::Suicidal(Suicidal::victim())));
+                        s.spawn = Some((task, Spawn::Death(Body::Suicidal(Suicidal::victim()))));
                     }
                     Err(_) => return Step::Finish(false),
                 }
@@ -200,7 +200,7 @@ impl Creator {
             //              uxPriority, NULL );
             6 => {
                 match k.create_task("SUICID2", self.priority) {
-                    Ok(task) => s.spawn = Some((task, Body::Suicidal(Suicidal::killer()))),
+                    Ok(task) => s.spawn = Some((task, Spawn::Death(Body::Suicidal(Suicidal::killer())))),
                     Err(_) => return Step::Finish(false),
                 }
                 self.pc = 7;

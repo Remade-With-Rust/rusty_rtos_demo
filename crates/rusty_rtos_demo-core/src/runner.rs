@@ -33,14 +33,14 @@ use rusty_rtos_core::config::{Config, PosixDemoConfig};
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
 use rusty_rtos_core::hooks::TickHook;
-use rusty_rtos_kernel::{Kernel, items_for, lists_for};
+use rusty_rtos_kernel::{Kernel, list_slots_for, lists_for};
 use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
     abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify,
-    timerdemo,
+    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, streambuffer,
+    tasknotify, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -77,7 +77,7 @@ pub type SimKernel<W> = Kernel<
     LineTrace<W>,
     TickIsr,
     TASKS,
-    { items_for(TASKS, TIMERS) },
+    { list_slots_for(TASKS, TIMERS, lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS)) },
     { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS) },
     QUEUES,
     SLOTS,
@@ -112,6 +112,8 @@ pub enum TickIsr {
     IntSem(intsem::Isr),
     /// `vBasicStreamBufferSendFromISR`.
     StreamBufferInterrupt(sbint::Isr),
+    /// `vPeriodicStreamBufferProcessing`.
+    StreamBuffer(streambuffer::Isr),
     /// `xNotifyTaskFromISR`, and the two timer callbacks with it.
     TaskNotify(tasknotify::Isr),
     /// `vTimerPeriodicISRTests`, and the four timer callbacks with it.
@@ -145,6 +147,7 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::QueueSetPolling(isr) => Self::QueueSetPolling(isr.tick(kernel)),
             Self::IntSem(isr) => Self::IntSem(isr.tick(kernel)),
             Self::StreamBufferInterrupt(isr) => Self::StreamBufferInterrupt(isr.tick(kernel)),
+            Self::StreamBuffer(isr) => Self::StreamBuffer(isr.tick(kernel)),
             Self::TaskNotify(isr) => Self::TaskNotify(isr.tick(kernel)),
             Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
             Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
@@ -178,6 +181,30 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
 /// `Spawned` exists so that only `death.c`'s creator -- the one body that
 /// adds a task mid-run -- pays for the question. The runner used to ask
 /// every body on every step.
+/// A body a running task has just created, waiting to be attached.
+///
+/// Two scenarios create tasks with the scheduler already running --
+/// `death.c`'s creator and `StreamBufferDemo.c`'s echo servers -- and
+/// [`Shared`] is `Copy`, so it cannot hold a [`Body`] (one arm of which
+/// borrows a future). This carries the `Copy` part across the gap.
+#[derive(Debug, Clone, Copy)]
+pub enum Spawn {
+    /// `death.c`'s suicidal pair.
+    Death(death::Body),
+    /// `StreamBufferDemo.c`'s echo clients.
+    StreamBuffer(streambuffer::Body),
+}
+
+impl Spawn {
+    /// The body to put in the runner's table.
+    fn into_body<'a>(self) -> Body<'a> {
+        match self {
+            Self::Death(b) => Body::Death(b),
+            Self::StreamBuffer(b) => Body::StreamBuffer(b),
+        }
+    }
+}
+
 pub(crate) enum Stepped {
     /// The body is a future: it reaches the kernel through the cell the
     /// runner is holding, so the runner has to let go and poll it.
@@ -235,6 +262,8 @@ pub enum State {
     IntSem(intsem::State),
     /// `StreamBufferInterrupt.c`.
     SbInt(sbint::State),
+    /// `StreamBufferDemo.c`.
+    StreamBuffer(streambuffer::State),
     /// `TaskNotify.c`.
     TaskNotify(tasknotify::State),
     /// `TimerDemo.c`.
@@ -264,7 +293,7 @@ pub struct Shared {
     /// itself — it is handed the kernel and this, nothing else. So it leaves
     /// the request here and [`Runner::step_once`] drains it the moment the
     /// step returns, which is before any other task can run.
-    pub spawn: Option<(TaskHandle, death::Body)>,
+    pub spawn: Option<(TaskHandle, Spawn)>,
 }
 
 impl Default for Shared {
@@ -319,6 +348,7 @@ impl Shared {
             State::QSetPoll(s) => s.still_running(),
             State::IntSem(s) => s.still_running(),
             State::SbInt(s) => s.still_running(),
+            State::StreamBuffer(s) => s.still_running(),
             // Reached only when the hook is not the matching one, which
             // means the interrupt half never ran.
             State::TaskNotify(s) => s.still_running(tasknotify::Isr::default()),
@@ -388,6 +418,8 @@ pub enum Body<'a> {
     IntSem(intsem::Body),
     /// `StreamBufferInterrupt.c`'s one.
     SbInt(sbint::Body),
+    /// `StreamBufferDemo.c`'s echo pairs and trigger-level test.
+    StreamBuffer(streambuffer::Body),
     /// `TaskNotify.c`'s one.
     TaskNotify(tasknotify::Body),
     /// `TimerDemo.c`'s one.
@@ -457,6 +489,14 @@ impl Body<'_> {
             // `death.c`'s two — and the only body that creates a task while
             // a run is going, so the only one asked whether it did.
             Self::Death(b) => {
+                let stepped = b.step(k, s);
+                return if s.spawn.is_some() {
+                    Stepped::Spawned(stepped)
+                } else {
+                    Stepped::Ran(stepped)
+                };
+            }
+            Self::StreamBuffer(b) => {
                 let stepped = b.step(k, s);
                 return if s.spawn.is_some() {
                     Stepped::Spawned(stepped)
@@ -831,7 +871,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         };
         if let Some((task, spawned)) = spawned {
             if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
-                *slot = Body::Death(spawned);
+                *slot = spawned.into_body();
             }
         }
         step
@@ -913,7 +953,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                         Stepped::Spawned(stepped) => {
                             if let Some((task, spawned)) = s.spawn.take() {
                                 if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
-                                    *slot = Body::Death(spawned);
+                                    *slot = spawned.into_body();
                                 }
                             }
                             stepped

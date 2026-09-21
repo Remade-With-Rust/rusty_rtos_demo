@@ -5,7 +5,8 @@ version = 4
 [[package]]
 name = "rusty_rtos_core"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_core#564cec81e8a1e84f572da832a46957a4a6f4377b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e3998d3323106878db36fbc8b565cd8eb572609118fa9a04e3e14c23ff80d80"
 
 [[package]]
 name = "rusty_rtos_demo"
@@ -26,7 +27,8 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_kernel"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#c6e57aef8b05c25df8bfe76cb216cb20a8f8ed31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7991f7df88f38864843fcca6cf16f16391da59e7010c79bda304b5f09f5def5e"
 dependencies = [
  "rusty_rtos_kernel-core",
 ]
@@ -34,7 +36,8 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_kernel-core"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_kernel#c6e57aef8b05c25df8bfe76cb216cb20a8f8ed31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f078537e5122d694f659cb347b8e9fc062f2c21639e2661af79d1bff76856f5"
 dependencies = [
  "rusty_rtos_core",
 ]
@@ -42,7 +45,8 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_port"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_port#167e5b07158d93a01ef4f272f91c9aabb6365a2a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "614d10978a55a96fed5df261ef07ee313a2298d2d43af5aba1eb87ac18c32675"
 dependencies = [
  "rusty_rtos_port-core",
 ]
@@ -50,7 +54,8 @@ dependencies = [
 [[package]]
 name = "rusty_rtos_port-core"
 version = "0.1.0"
-source = "git+https://github.com/Remade-With-Rust/rusty_rtos_port#167e5b07158d93a01ef4f272f91c9aabb6365a2a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9593bb12db6dfaed21d419237f7270f3f454ee174736ddd6ab7bbaf83e5ff227"
 dependencies = [
  "rusty_rtos_core",
 ]

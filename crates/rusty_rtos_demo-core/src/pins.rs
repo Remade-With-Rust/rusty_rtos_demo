@@ -18,9 +18,21 @@
 //! one means either the oracle was re-pinned or the sim contract changed
 //! — both decision-log rows, not edits.
 //!
-//! `exits` is the one to watch: it is sim time itself, the count of
-//! outermost critical-section exits, so anything that changed *when* the
-//! scheduler ran moves it long before it moves a digest.
+//! `exits` is the one to watch: it is sim time itself, and anything that
+//! changed *when* the scheduler ran moves it long before it moves a digest.
+//!
+//! # These are contract v2 numbers
+//!
+//! Under v1 `exits` counted outermost critical-section exits and nothing
+//! else. v2 adds one more kind of kernel-visible point -- a kernel call
+//! that returned without taking a section, which costs one empty section --
+//! so `exits` is now the count of kernel-visible points of both kinds.
+//!
+//! The change moved exactly **two** rows, `StreamBufferDemo` and
+//! `MessageBufferAMP`, because stream and message buffers are the only
+//! objects with a call that can return blind. Every other row below is the
+//! same number it was under v1, which is the evidence that the widening was
+//! as narrow as it was meant to be. See `docs/HOLES.md`, H9.
 
 use core::fmt;
 
@@ -29,8 +41,8 @@ use rusty_rtos_core::error::Result;
 use crate::runner::Runner;
 use crate::{
     abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, tasknotify,
-    timerdemo,
+    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, streambuffer,
+    tasknotify, timerdemo,
 };
 
 /// The DEFAULT length of a pinned run. The check task ends the run at the
@@ -41,7 +53,7 @@ use crate::{
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 20;
+pub const COUNT: usize = 21;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -297,6 +309,17 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             bytes: 66_145,
         },
         Pin {
+            name: "StreamBufferDemo",
+            start: streambuffer::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2000,
+            yields: 2424,
+            exits: 28002,
+            lines: 20927,
+            digest: 0xf159_2634_a152_db89,
+            bytes: 676_662,
+        },
+        Pin {
             name: "TaskNotify",
             start: tasknotify::start,
             run_ticks: PIN_TICKS,
@@ -333,12 +356,12 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             name: "MessageBufferAMP",
             start: mbamp::start,
             run_ticks: PIN_TICKS,
-            ticks: 2001,
-            yields: 71,
-            exits: 2072,
-            lines: 2430,
-            digest: 0x1d93_4bbd_dc9e_03d4,
-            bytes: 71_089,
+            ticks: 2000,
+            yields: 75,
+            exits: 2090,
+            lines: 2445,
+            digest: 0x0f72_591f_32d8_4bec,
+            bytes: 71_529,
         },
         // `PollQ` again, written against the Rust face (mission plan, K2.1).
         // Every number here is `PollQ`'s own, deliberately and to the digit —
