@@ -40,9 +40,9 @@ use rusty_rtos_core::error::Result;
 
 use crate::runner::Runner;
 use crate::{
-    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intqueue,
-    intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll, recmutex,
-    sbint, semtest, streambuffer, tasknotify, timerdemo,
+    abortdelay, apisweep, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest,
+    intqueue, intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll,
+    recmutex, sbint, semtest, streambuffer, tasknotify, timerdemo,
 };
 
 /// The DEFAULT length of a pinned run. The check task ends the run at the
@@ -53,7 +53,7 @@ use crate::{
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 24;
+pub const COUNT: usize = 25;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -351,6 +351,18 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             lines: 44284,
             digest: 0x595e_402b_5576_5d65,
             bytes: 1_279_335,
+        },
+        Pin {
+            // KAIROS-authored rather than ported; see oracle/harness/ApiSweep.c.
+            name: "ApiSweep",
+            start: apisweep::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2003,
+            yields: 354,
+            exits: 3505,
+            lines: 4897,
+            digest: 0x2438_48b2_612f_ff91,
+            bytes: 143_106,
         },
         Pin {
             name: "TaskNotify",

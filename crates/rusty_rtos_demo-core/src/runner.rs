@@ -38,9 +38,9 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intqueue,
-    intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll, recmutex,
-    sbint, semtest, streambuffer, tasknotify, timerdemo,
+    abortdelay, apisweep, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest,
+    intqueue, intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll,
+    recmutex, sbint, semtest, streambuffer, tasknotify, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -134,6 +134,8 @@ pub enum TickIsr {
     IntQueue(intqueue::Isr),
     /// `vQueueSetAccessQueueSetFromISR`.
     QueueSet(qset::Isr),
+    /// `vApiSweepAccessFromISR`.
+    ApiSweep(apisweep::Isr),
     /// `MessageBufferAMP`'s replaced `sbSEND_COMPLETED`. It has no tick
     /// half at all — the seam it uses is the send, not the timer.
     MessageBufferAmp(mbamp::Isr),
@@ -167,6 +169,7 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
             Self::IntQueue(isr) => Self::IntQueue(isr.tick(kernel)),
             Self::QueueSet(isr) => Self::QueueSet(isr.tick(kernel)),
+            Self::ApiSweep(isr) => Self::ApiSweep(isr.tick(kernel)),
             Self::MessageBufferAmp(_) => self,
         }
     }
@@ -188,6 +191,9 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
                 | rusty_rtos_kernel::events::PENDED_CLEAR_BITS
         ) {
             let _ = kernel.event_group_pended_call(function, param1, param2);
+        }
+        if function == apisweep::PENDED_SWEEP {
+            apisweep::pended_call(kernel, param2);
         }
     }
 }
@@ -289,6 +295,8 @@ pub enum State {
     IntQueue(intqueue::State),
     /// `QueueSet.c`.
     QueueSet(qset::State),
+    /// `ApiSweep`, ours rather than a port.
+    ApiSweep(apisweep::State),
     /// `TaskNotify.c`.
     TaskNotify(tasknotify::State),
     /// `TimerDemo.c`.
@@ -353,6 +361,9 @@ impl Shared {
         if let (State::QueueSet(s), TickIsr::QueueSet(isr)) = (&mut self.state, isr) {
             return s.still_running(isr);
         }
+        if let (State::ApiSweep(s), TickIsr::ApiSweep(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -386,6 +397,8 @@ impl Shared {
             State::IntQueue(s) => s.still_running(intqueue::Isr::default()),
             // As above.
             State::QueueSet(s) => s.still_running(qset::Isr::default()),
+            // As above.
+            State::ApiSweep(s) => s.still_running(apisweep::Isr::default()),
             // Reached only when the hook is not the matching one, which
             // means the interrupt half never ran.
             State::TaskNotify(s) => s.still_running(tasknotify::Isr::default()),
@@ -463,6 +476,8 @@ pub enum Body<'a> {
     IntQueue(intqueue::Body),
     /// `QueueSet.c`'s Tx and Rx pair.
     QueueSet(qset::Body),
+    /// `ApiSweep`'s one task.
+    ApiSweep(apisweep::Body),
     /// `TaskNotify.c`'s one.
     TaskNotify(tasknotify::Body),
     /// `TimerDemo.c`'s one.
@@ -557,6 +572,7 @@ impl Body<'_> {
             }
             Self::IntQueue(b) => b.step(k, s),
             Self::QueueSet(b) => b.step(k, s),
+            Self::ApiSweep(b) => b.step(k, s),
             Self::Idle(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),

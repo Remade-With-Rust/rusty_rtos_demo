@@ -56,6 +56,7 @@
 //! from it.
 
 pub mod abortdelay;
+pub mod apisweep;
 pub mod blockq;
 pub mod blocktim;
 pub mod countsem;
@@ -164,6 +165,8 @@ pub enum Scenario {
     IntQueue,
     /// `QueueSet.c`.
     QueueSet,
+    /// `ApiSweep`, which is ours rather than a port.
+    ApiSweep,
     /// `PollQ.c` against the Rust face — diffed against `PollQ`'s own
     /// C oracle trace, because the face is supposed to cost nothing.
     PollQTyped,
@@ -200,6 +203,7 @@ impl Scenario {
             Self::MessageBuffer => "MessageBufferDemo",
             Self::IntQueue => "IntQueue",
             Self::QueueSet => "QueueSet",
+            Self::ApiSweep => "ApiSweep",
             Self::PollQTyped => "PollQ-typed",
             Self::PollQAsync => "PollQ-async",
         }
@@ -232,6 +236,7 @@ impl Scenario {
             "MessageBufferDemo" => Some(Self::MessageBuffer),
             "IntQueue" => Some(Self::IntQueue),
             "QueueSet" => Some(Self::QueueSet),
+            "ApiSweep" => Some(Self::ApiSweep),
             "PollQ-typed" => Some(Self::PollQTyped),
             "PollQ-async" => Some(Self::PollQAsync),
             _ => None,
