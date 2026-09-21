@@ -200,7 +200,9 @@ impl Creator {
             //              uxPriority, NULL );
             6 => {
                 match k.create_task("SUICID2", self.priority) {
-                    Ok(task) => s.spawn = Some((task, Spawn::Death(Body::Suicidal(Suicidal::killer())))),
+                    Ok(task) => {
+                        s.spawn = Some((task, Spawn::Death(Body::Suicidal(Suicidal::killer()))))
+                    }
                     Err(_) => return Step::Finish(false),
                 }
                 self.pc = 7;

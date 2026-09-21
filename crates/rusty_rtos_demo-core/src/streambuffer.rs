@@ -203,7 +203,11 @@ impl State {
     pub fn still_running(&mut self) -> bool {
         for index in 0..ECHO_CLIENTS {
             let now = self.echo_loop_counters.get(index).copied().unwrap_or(0);
-            let last = self.last_echo_loop_counters.get(index).copied().unwrap_or(0);
+            let last = self
+                .last_echo_loop_counters
+                .get(index)
+                .copied()
+                .unwrap_or(0);
             if last == now {
                 self.error_status = false;
             } else if let Some(slot) = self.last_echo_loop_counters.get_mut(index) {
@@ -399,7 +403,9 @@ impl NonBlockingReceiver {
         }
 
         let want = PC54.get(self.next_char..self.next_char.saturating_add(to_test));
-        let got = self.rx.get(start_index..start_index.saturating_add(to_test));
+        let got = self
+            .rx
+            .get(start_index..start_index.saturating_add(to_test));
         if want != got {
             self.error = true;
         }
@@ -642,7 +648,8 @@ impl EchoClient {
             // The two clients run at priorities 0 and 1, so the priority IS
             // the index into ulEchoLoopCounters. Upstream says so.
             0 => {
-                self.index = usize::from(k.task_priority_get(None).unwrap_or(0)).min(ECHO_CLIENTS - 1);
+                self.index =
+                    usize::from(k.task_priority_get(None).unwrap_or(0)).min(ECHO_CLIENTS - 1);
                 self.pc = 1;
             }
             // pcStringToSend = pvPortMalloc( sbSTREAM_BUFFER_LENGTH_BYTES );
@@ -1002,8 +1009,7 @@ impl Trigger {
         // and the mismatch would pass unnoticed -- so the guard has to stay,
         // and short-circuit, rather than becoming one comparison.
         let too_many = received > self.rx.len();
-        let wrong_data =
-            !too_many && self.rx.get(..received) != FROM_INTERRUPT.get(..received);
+        let wrong_data = !too_many && self.rx.get(..received) != FROM_INTERRUPT.get(..received);
         if too_many || wrong_data {
             self.error_detected = true;
         }
@@ -1121,7 +1127,15 @@ impl Single {
             // --- fill it with another 29; head 30, tail 0 ---
             10 => {
                 self.took(BUFFER_LESS_ONE);
-                self.send_expecting(k, s, buffer, BUFFER_LESS_ONE, DONT_BLOCK, BUFFER_LESS_ONE, 11);
+                self.send_expecting(
+                    k,
+                    s,
+                    buffer,
+                    BUFFER_LESS_ONE,
+                    DONT_BLOCK,
+                    BUFFER_LESS_ONE,
+                    11,
+                );
             }
             11 => self.check_spaces(k, s, buffer, self.expected_spaces, 12),
             12 => self.check_bytes(k, s, buffer, self.expected_bytes, 13),
@@ -1307,7 +1321,8 @@ impl Single {
                     // pucReadData is pucData + 17, so the compare is between
                     // two windows on the same allocation.
                     self.write_at(SEVENTEEN, &read);
-                    let matched = self.data(SIX) == self.full.get(SEVENTEEN..READ_SIX_END).unwrap_or(&[]);
+                    let matched =
+                        self.data(SIX) == self.full.get(SEVENTEEN..READ_SIX_END).unwrap_or(&[]);
                     s.expect(matched);
                     self.pc = 58;
                 }
@@ -1383,8 +1398,8 @@ impl Single {
                 };
                 s.expect(count == SEVENTEEN);
                 self.write_at(SEVENTEEN, &read);
-                let matched = self.data(SEVENTEEN)
-                    == self.full.get(SEVENTEEN..SEVENTEEN * 2).unwrap_or(&[]);
+                let matched =
+                    self.data(SEVENTEEN) == self.full.get(SEVENTEEN..SEVENTEEN * 2).unwrap_or(&[]);
                 s.expect(matched);
                 self.pc = 72;
             }
@@ -1468,7 +1483,9 @@ impl Single {
                     Ok(Wait::Ready(count)) => {
                         self.write_at(0, &read);
                         s.expect(count == BUFFER_BYTES);
-                        s.expect(self.data(BUFFER_BYTES) == PC54.get(..BUFFER_BYTES).unwrap_or(&[]));
+                        s.expect(
+                            self.data(BUFFER_BYTES) == PC54.get(..BUFFER_BYTES).unwrap_or(&[]),
+                        );
                         self.pc = 80;
                     }
                     Ok(Wait::Blocked) => {}
@@ -1560,7 +1577,9 @@ impl Single {
                 match k.stream_buffer_receive(buffer, &mut read, MINIMAL_BLOCK_TIME) {
                     Ok(Wait::Ready(_)) | Err(_) => {
                         self.write_at(0, &read);
-                        s.expect(self.data(BUFFER_BYTES) == PC54.get(..BUFFER_BYTES).unwrap_or(&[]));
+                        s.expect(
+                            self.data(BUFFER_BYTES) == PC54.get(..BUFFER_BYTES).unwrap_or(&[]),
+                        );
                         self.pc = 95;
                     }
                     Ok(Wait::Blocked) => {}
@@ -1604,7 +1623,9 @@ impl Single {
         want: usize,
         next: u16,
     ) {
-        let got = k.stream_buffer_spaces_available(buffer).unwrap_or(usize::MAX);
+        let got = k
+            .stream_buffer_spaces_available(buffer)
+            .unwrap_or(usize::MAX);
         s.expect(got == want);
         self.pc = next;
     }
@@ -1617,7 +1638,9 @@ impl Single {
         want: usize,
         next: u16,
     ) {
-        let got = k.stream_buffer_bytes_available(buffer).unwrap_or(usize::MAX);
+        let got = k
+            .stream_buffer_bytes_available(buffer)
+            .unwrap_or(usize::MAX);
         s.expect(got == want);
         self.pc = next;
     }

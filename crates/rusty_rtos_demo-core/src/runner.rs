@@ -39,8 +39,8 @@ use rusty_rtos_port::SimPort;
 use crate::trace::LineTrace;
 use crate::{
     abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest, streambuffer,
-    tasknotify, timerdemo,
+    messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
+    streambuffer, tasknotify, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -77,7 +77,13 @@ pub type SimKernel<W> = Kernel<
     LineTrace<W>,
     TickIsr,
     TASKS,
-    { list_slots_for(TASKS, TIMERS, lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS)) },
+    {
+        list_slots_for(
+            TASKS,
+            TIMERS,
+            lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS),
+        )
+    },
     { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS) },
     QUEUES,
     SLOTS,
@@ -193,6 +199,8 @@ pub enum Spawn {
     Death(death::Body),
     /// `StreamBufferDemo.c`'s echo clients.
     StreamBuffer(streambuffer::Body),
+    /// `MessageBufferDemo.c`'s echo clients.
+    MessageBuffer(messagebuffer::Body),
 }
 
 impl Spawn {
@@ -201,6 +209,7 @@ impl Spawn {
         match self {
             Self::Death(b) => Body::Death(b),
             Self::StreamBuffer(b) => Body::StreamBuffer(b),
+            Self::MessageBuffer(b) => Body::MessageBuffer(b),
         }
     }
 }
@@ -264,6 +273,8 @@ pub enum State {
     SbInt(sbint::State),
     /// `StreamBufferDemo.c`.
     StreamBuffer(streambuffer::State),
+    /// `MessageBufferDemo.c`.
+    MessageBuffer(messagebuffer::State),
     /// `TaskNotify.c`.
     TaskNotify(tasknotify::State),
     /// `TimerDemo.c`.
@@ -349,6 +360,7 @@ impl Shared {
             State::IntSem(s) => s.still_running(),
             State::SbInt(s) => s.still_running(),
             State::StreamBuffer(s) => s.still_running(),
+            State::MessageBuffer(s) => s.still_running(),
             // Reached only when the hook is not the matching one, which
             // means the interrupt half never ran.
             State::TaskNotify(s) => s.still_running(tasknotify::Isr::default()),
@@ -420,6 +432,8 @@ pub enum Body<'a> {
     SbInt(sbint::Body),
     /// `StreamBufferDemo.c`'s echo pairs and trigger-level test.
     StreamBuffer(streambuffer::Body),
+    /// `MessageBufferDemo.c`'s echo pairs and non-blocking pair.
+    MessageBuffer(messagebuffer::Body),
     /// `TaskNotify.c`'s one.
     TaskNotify(tasknotify::Body),
     /// `TimerDemo.c`'s one.
@@ -497,6 +511,14 @@ impl Body<'_> {
                 };
             }
             Self::StreamBuffer(b) => {
+                let stepped = b.step(k, s);
+                return if s.spawn.is_some() {
+                    Stepped::Spawned(stepped)
+                } else {
+                    Stepped::Ran(stepped)
+                };
+            }
+            Self::MessageBuffer(b) => {
                 let stepped = b.step(k, s);
                 return if s.spawn.is_some() {
                     Stepped::Spawned(stepped)

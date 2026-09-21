@@ -65,6 +65,7 @@ pub mod eventgroups;
 pub mod genqtest;
 pub mod intsem;
 pub mod mbamp;
+pub mod messagebuffer;
 pub mod pins;
 pub mod pollq;
 pub mod pollq_async;
@@ -155,6 +156,8 @@ pub enum Scenario {
     EventGroups,
     /// `MessageBufferAMP.c`.
     MbAmp,
+    /// `MessageBufferDemo.c`.
+    MessageBuffer,
     /// `PollQ.c` against the Rust face — diffed against `PollQ`'s own
     /// C oracle trace, because the face is supposed to cost nothing.
     PollQTyped,
@@ -188,6 +191,7 @@ impl Scenario {
             Self::TimerDemo => "TimerDemo",
             Self::EventGroups => "EventGroupsDemo",
             Self::MbAmp => "MessageBufferAMP",
+            Self::MessageBuffer => "MessageBufferDemo",
             Self::PollQTyped => "PollQ-typed",
             Self::PollQAsync => "PollQ-async",
         }
@@ -217,6 +221,7 @@ impl Scenario {
             "TimerDemo" => Some(Self::TimerDemo),
             "EventGroupsDemo" => Some(Self::EventGroups),
             "MessageBufferAMP" => Some(Self::MbAmp),
+            "MessageBufferDemo" => Some(Self::MessageBuffer),
             "PollQ-typed" => Some(Self::PollQTyped),
             "PollQ-async" => Some(Self::PollQAsync),
             _ => None,
