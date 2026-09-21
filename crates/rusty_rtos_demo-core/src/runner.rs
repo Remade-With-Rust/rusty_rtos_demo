@@ -38,9 +38,9 @@ use rusty_rtos_port::SimPort;
 
 use crate::trace::LineTrace;
 use crate::{
-    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
-    streambuffer, tasknotify, timerdemo,
+    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intqueue,
+    intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll, recmutex,
+    sbint, semtest, streambuffer, tasknotify, timerdemo,
 };
 
 /// How many tasks a scenario may create, idle and timer included.
@@ -106,6 +106,10 @@ pub type SimKernel<W> = Kernel<
 /// that is how the hook gets `&mut` the kernel it lives in without
 /// borrowing itself twice.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "IntQueue's two 200-byte logs are the C's own ucNormallyEmptyReceivedValues               and ucNormallyFullReceivedValues, and both halves of that scenario write               them -- so they have to live in the arm the tick hook owns. Boxing is not               available to a no_std crate without alloc, and 400 bytes of static is a               price a firmware cell can pay."
+)]
 pub enum TickIsr {
     /// No interrupt half — the scenario has none, or none is installed.
     #[default]
@@ -126,6 +130,10 @@ pub enum TickIsr {
     TimerDemo(timerdemo::Isr),
     /// `vPeriodicEventGroupsProcessing`.
     EventGroups(eventgroups::Isr),
+    /// `IntQueue`'s two timer handlers, run first-then-second per tick.
+    IntQueue(intqueue::Isr),
+    /// `vQueueSetAccessQueueSetFromISR`.
+    QueueSet(qset::Isr),
     /// `MessageBufferAMP`'s replaced `sbSEND_COMPLETED`. It has no tick
     /// half at all — the seam it uses is the send, not the timer.
     MessageBufferAmp(mbamp::Isr),
@@ -157,6 +165,8 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
             Self::TaskNotify(isr) => Self::TaskNotify(isr.tick(kernel)),
             Self::TimerDemo(isr) => Self::TimerDemo(isr.tick(kernel)),
             Self::EventGroups(isr) => Self::EventGroups(isr.tick(kernel)),
+            Self::IntQueue(isr) => Self::IntQueue(isr.tick(kernel)),
+            Self::QueueSet(isr) => Self::QueueSet(isr.tick(kernel)),
             Self::MessageBufferAmp(_) => self,
         }
     }
@@ -275,6 +285,10 @@ pub enum State {
     StreamBuffer(streambuffer::State),
     /// `MessageBufferDemo.c`.
     MessageBuffer(messagebuffer::State),
+    /// `IntQueue.c`.
+    IntQueue(intqueue::State),
+    /// `QueueSet.c`.
+    QueueSet(qset::State),
     /// `TaskNotify.c`.
     TaskNotify(tasknotify::State),
     /// `TimerDemo.c`.
@@ -333,6 +347,12 @@ impl Shared {
         if let (State::TaskNotify(s), TickIsr::TaskNotify(isr)) = (&mut self.state, isr) {
             return s.still_running(isr);
         }
+        if let (State::IntQueue(s), TickIsr::IntQueue(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
+        if let (State::QueueSet(s), TickIsr::QueueSet(isr)) = (&mut self.state, isr) {
+            return s.still_running(isr);
+        }
         match &mut self.state {
             State::None => false,
             State::Dynamic(s) => s.still_running(),
@@ -361,6 +381,11 @@ impl Shared {
             State::SbInt(s) => s.still_running(),
             State::StreamBuffer(s) => s.still_running(),
             State::MessageBuffer(s) => s.still_running(),
+            // Reached only when the hook is not the matching one, which
+            // means the interrupt half never ran.
+            State::IntQueue(s) => s.still_running(intqueue::Isr::default()),
+            // As above.
+            State::QueueSet(s) => s.still_running(qset::Isr::default()),
             // Reached only when the hook is not the matching one, which
             // means the interrupt half never ran.
             State::TaskNotify(s) => s.still_running(tasknotify::Isr::default()),
@@ -434,6 +459,10 @@ pub enum Body<'a> {
     StreamBuffer(streambuffer::Body),
     /// `MessageBufferDemo.c`'s echo pairs and non-blocking pair.
     MessageBuffer(messagebuffer::Body),
+    /// `IntQueue.c`'s six tasks.
+    IntQueue(intqueue::Body),
+    /// `QueueSet.c`'s Tx and Rx pair.
+    QueueSet(qset::Body),
     /// `TaskNotify.c`'s one.
     TaskNotify(tasknotify::Body),
     /// `TimerDemo.c`'s one.
@@ -526,6 +555,8 @@ impl Body<'_> {
                     Stepped::Ran(stepped)
                 };
             }
+            Self::IntQueue(b) => b.step(k, s),
+            Self::QueueSet(b) => b.step(k, s),
             Self::Idle(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),

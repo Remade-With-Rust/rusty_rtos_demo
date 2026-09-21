@@ -28,8 +28,9 @@ use std::process::ExitCode;
 use rusty_rtos_demo_core::runner::{Runner, Shared};
 use rusty_rtos_demo_core::{
     Scenario, Step, Verdict, abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups,
-    genqtest, intsem, mbamp, messagebuffer, pollq, pollq_async, pollq_typed, qoverwrite, qpeek,
-    qsetpoll, recmutex, sbint, semtest, step_limit_for, streambuffer, tasknotify, timerdemo,
+    genqtest, intqueue, intsem, mbamp, messagebuffer, pollq, pollq_async, pollq_typed, qoverwrite,
+    qpeek, qset, qsetpoll, recmutex, sbint, semtest, step_limit_for, streambuffer, tasknotify,
+    timerdemo,
 };
 
 /// The C harness's default run length.
@@ -48,7 +49,22 @@ struct Stderr {
 impl Stderr {
     fn new() -> Self {
         Self {
-            out: BufWriter::with_capacity(1 << 20, io::stderr()),
+            // `KAIROS_TRACE_UNBUFFERED` drops the capacity to one byte so
+            // that an `eprintln!` added while diagnosing interleaves with
+            // the trace in the right ORDER, instead of arriving after a
+            // megabyte of it. That ordering is what located IntQueue's
+            // divergence: it showed the blocking bookkeeping happening with
+            // no body step between it and the tick, which is what named the
+            // kernel's queue path rather than the scenario. Diagnostics
+            // only -- it changes nothing about what is written.
+            out: BufWriter::with_capacity(
+                if std::env::var_os("KAIROS_TRACE_UNBUFFERED").is_some() {
+                    1
+                } else {
+                    1 << 20
+                },
+                io::stderr(),
+            ),
             failed: false,
         }
     }
@@ -205,6 +221,8 @@ fn main() -> ExitCode {
             Scenario::SbInt => sbint::start(&mut runner, max_ticks),
             Scenario::StreamBuffer => streambuffer::start(&mut runner, max_ticks),
             Scenario::MessageBuffer => messagebuffer::start(&mut runner, max_ticks),
+            Scenario::IntQueue => intqueue::start(&mut runner, max_ticks),
+            Scenario::QueueSet => qset::start(&mut runner, max_ticks),
             Scenario::TaskNotify => tasknotify::start(&mut runner, max_ticks),
             Scenario::TimerDemo => timerdemo::start(&mut runner, max_ticks),
             Scenario::EventGroups => eventgroups::start(&mut runner, max_ticks),

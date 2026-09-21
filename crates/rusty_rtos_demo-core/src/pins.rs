@@ -40,9 +40,9 @@ use rusty_rtos_core::error::Result;
 
 use crate::runner::Runner;
 use crate::{
-    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intsem, mbamp,
-    messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qsetpoll, recmutex, sbint, semtest,
-    streambuffer, tasknotify, timerdemo,
+    abortdelay, blockq, blocktim, countsem, death, dynamic, eventgroups, genqtest, intqueue,
+    intsem, mbamp, messagebuffer, pollq, pollq_typed, qoverwrite, qpeek, qset, qsetpoll, recmutex,
+    sbint, semtest, streambuffer, tasknotify, timerdemo,
 };
 
 /// The DEFAULT length of a pinned run. The check task ends the run at the
@@ -53,7 +53,7 @@ use crate::{
 pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
-pub const COUNT: usize = 22;
+pub const COUNT: usize = 24;
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -329,6 +329,28 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             lines: 19587,
             digest: 0x5cb3_12f2_6ca3_18f9,
             bytes: 620_657,
+        },
+        Pin {
+            name: "QueueSet",
+            start: qset::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2000,
+            yields: 624,
+            exits: 6137,
+            lines: 6280,
+            digest: 0x2f8a_570d_f721_e2bc,
+            bytes: 167_059,
+        },
+        Pin {
+            name: "IntQueue",
+            start: intqueue::start,
+            run_ticks: PIN_TICKS,
+            ticks: 2002,
+            yields: 6999,
+            exits: 31827,
+            lines: 44284,
+            digest: 0x595e_402b_5576_5d65,
+            bytes: 1_279_335,
         },
         Pin {
             name: "TaskNotify",

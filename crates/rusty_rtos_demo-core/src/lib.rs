@@ -63,6 +63,7 @@ pub mod death;
 pub mod dynamic;
 pub mod eventgroups;
 pub mod genqtest;
+pub mod intqueue;
 pub mod intsem;
 pub mod mbamp;
 pub mod messagebuffer;
@@ -72,6 +73,7 @@ pub mod pollq_async;
 pub mod pollq_typed;
 pub mod qoverwrite;
 pub mod qpeek;
+pub mod qset;
 pub mod qsetpoll;
 pub mod recmutex;
 pub mod runner;
@@ -158,6 +160,10 @@ pub enum Scenario {
     MbAmp,
     /// `MessageBufferDemo.c`.
     MessageBuffer,
+    /// `IntQueue.c`.
+    IntQueue,
+    /// `QueueSet.c`.
+    QueueSet,
     /// `PollQ.c` against the Rust face — diffed against `PollQ`'s own
     /// C oracle trace, because the face is supposed to cost nothing.
     PollQTyped,
@@ -192,6 +198,8 @@ impl Scenario {
             Self::EventGroups => "EventGroupsDemo",
             Self::MbAmp => "MessageBufferAMP",
             Self::MessageBuffer => "MessageBufferDemo",
+            Self::IntQueue => "IntQueue",
+            Self::QueueSet => "QueueSet",
             Self::PollQTyped => "PollQ-typed",
             Self::PollQAsync => "PollQ-async",
         }
@@ -222,6 +230,8 @@ impl Scenario {
             "EventGroupsDemo" => Some(Self::EventGroups),
             "MessageBufferAMP" => Some(Self::MbAmp),
             "MessageBufferDemo" => Some(Self::MessageBuffer),
+            "IntQueue" => Some(Self::IntQueue),
+            "QueueSet" => Some(Self::QueueSet),
             "PollQ-typed" => Some(Self::PollQTyped),
             "PollQ-async" => Some(Self::PollQAsync),
             _ => None,
