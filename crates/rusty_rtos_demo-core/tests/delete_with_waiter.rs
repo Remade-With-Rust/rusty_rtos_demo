@@ -10,16 +10,19 @@
 //! whole subject of the scenario. So the sixth hypothesis is that deletion —
 //! or abort — with a waiter queued does not reclaim.
 //!
-//! This asks it directly, and it asks three shapes, because "with a waiter"
-//! is not one thing:
+//! This asks it directly across SIX shapes and all four surfaces the
+//! scenario uses. On the queue, because "with a waiter" is not one thing:
 //!
 //! 1. block a task on a queue, then **delete** the queue;
 //! 2. block a task, **abort** the block, then delete;
 //! 3. block a task, **let it time out**, then delete — the control, which
 //!    should behave exactly like the isolated probe.
 //!
-//! If (3) holds capacity and (1) or (2) loses it, the defect is named. If
-//! all three hold, the hypothesis dies like the five before it.
+//! and then the same block-abort-delete shape on the semaphore, the event
+//! group and the stream buffer.
+//!
+//! RESULT: all six hold. The hypothesis died like the five before it, and
+//! the three extra surfaces killed the follow-up that named them.
 //!
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test delete_with_waiter -- --ignored --nocapture
@@ -81,6 +84,40 @@ fn capacity_after(rounds: usize, mut after_block: impl FnMut(&mut SimKernel<Dige
     (before, after)
 }
 
+/// The same shape for a surface that is not a queue: create it, park the
+/// current task on it, **abort** that block, then delete — and report
+/// capacity before and after.
+///
+/// Abort rather than time out, because abort is the shape the scenario uses
+/// and the one the queue rows found hardest to break.
+fn surface_with_waiter<H: Copy>(
+    _name: &str,
+    mut create: impl FnMut(&mut SimKernel<Digest>) -> Option<H>,
+    mut block: impl FnMut(&mut SimKernel<Digest>, H),
+    mut delete: impl FnMut(&mut SimKernel<Digest>, H),
+) -> (usize, usize) {
+    let before = {
+        let kernel = kernel_with_a_task();
+        let mut k = kernel.borrow_mut();
+        free_capacity(&mut k)
+    };
+
+    let kernel = kernel_with_a_task();
+    let after = {
+        let mut k = kernel.borrow_mut();
+        for _ in 0..ROUNDS {
+            let Some(h) = create(&mut k) else { break };
+            block(&mut k, h);
+            let current = k.current();
+            let _ = k.abort_delay(current);
+            delete(&mut k, h);
+        }
+        free_capacity(&mut k)
+    };
+
+    (before, after)
+}
+
 #[test]
 #[ignore = "a diagnostic, not a gate: run it with --ignored --nocapture"]
 fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
@@ -108,8 +145,54 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
     });
     println!("{:<34}  {b3:>7}  {a3:>7}  {:>6}", "block -> time out -> delete", b3.saturating_sub(a3));
 
+    // ---- the other three surfaces ----
+    //
+    // The queue rows above were the first version of this test. The
+    // scenario also blocks and aborts on a semaphore, an event group and a
+    // stream buffer, and those were only ever tested for plain
+    // create/delete -- never with a waiter parked on them.
+    let sem = surface_with_waiter(
+        "semaphore",
+        |k| k.semaphore_create_binary().ok(),
+        |k, h| {
+            let _ = k.semaphore_take(h, 100);
+        },
+        |k, h| {
+            let _ = k.queue_delete(h);
+        },
+    );
+    println!("{:<34}  {:>7}  {:>7}  {:>6}", "semaphore: block -> abort -> del", sem.0, sem.1, sem.0.saturating_sub(sem.1));
+
+    let grp = surface_with_waiter(
+        "event group",
+        |k| k.event_group_create().ok(),
+        |k, h| {
+            let _ = k.event_group_wait_bits(h, 0x01, true, false, 100);
+        },
+        |k, h| {
+            let _ = k.event_group_delete(h);
+        },
+    );
+    println!("{:<34}  {:>7}  {:>7}  {:>6}", "event group: block -> abort -> del", grp.0, grp.1, grp.0.saturating_sub(grp.1));
+
+    let stream = surface_with_waiter(
+        "stream buffer",
+        |k| k.stream_buffer_create(1, 1).ok(),
+        |k, h| {
+            let mut buf = [0u8; 1];
+            let _ = k.stream_buffer_receive(h, &mut buf, 100);
+        },
+        |k, h| {
+            let _ = k.stream_buffer_delete(h);
+        },
+    );
+    println!("{:<34}  {:>7}  {:>7}  {:>6}", "stream buffer: block -> abort -> del", stream.0, stream.1, stream.0.saturating_sub(stream.1));
+
     println!();
     let lost = [
+        ("semaphore", sem.0.saturating_sub(sem.1)),
+        ("event group", grp.0.saturating_sub(grp.1)),
+        ("stream buffer", stream.0.saturating_sub(stream.1)),
         ("block -> delete", b1.saturating_sub(a1)),
         ("block -> abort -> delete", b2.saturating_sub(a2)),
         ("block -> time out -> delete", b3.saturating_sub(a3)),
@@ -117,9 +200,16 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
     let guilty: Vec<_> = lost.iter().filter(|(_, l)| *l > 0).collect();
 
     if guilty.is_empty() {
-        println!("All three hold their capacity. A queued waiter does NOT stop a");
-        println!("slot being returned, so the sixth hypothesis dies with the five");
-        println!("before it and AbortDelay's exhaustion is still unexplained.");
+        println!("ALL SIX hold their capacity, across all four surfaces the");
+        println!("scenario uses. A queued waiter does not stop a slot being");
+        println!("returned, and neither does aborting it.");
+        println!();
+        println!("So every isolated shape reclaims while the scenario exhausts.");
+        println!("That is now the finding: the difference is something these");
+        println!("probes do not reproduce, and eight guesses at what have each");
+        println!("been wrong. The next person should look for what the RUNNER");
+        println!("does that a hand-driven kernel does not, rather than for");
+        println!("another create/delete pair to blame.");
     } else {
         for (name, l) in guilty {
             println!("LOSES CAPACITY: {name} -- {l} slot(s) over {ROUNDS} rounds.");
