@@ -47,7 +47,18 @@ const LENGTHS: [u64; 3] = [220_000, 221_000, 3_600_000];
 /// afterwards. Returns `(pass, controlling, blocking, error, first_failure,
 /// queued_at_end)`.
 #[allow(clippy::type_complexity)]
-fn run_for(ticks: u64) -> (bool, i32, i32, bool, Option<(u64, u64, u8)>, Option<usize>) {
+fn run_for(
+    ticks: u64,
+) -> (
+    bool,
+    i32,
+    i32,
+    bool,
+    Option<(u64, u64, u8)>,
+    Option<usize>,
+    Option<&'static str>,
+    bool,
+) {
     let pin = pins::<Digest>()
         .into_iter()
         .find(|p| p.name == "AbortDelay")
@@ -83,6 +94,8 @@ fn run_for(ticks: u64) -> (bool, i32, i32, bool, Option<(u64, u64, u8)>, Option<
         state.error,
         state.first_margin_failure,
         queued,
+        state.first_send_outcome,
+        state.queue_create_refused,
     )
 }
 
@@ -98,7 +111,11 @@ fn which_condition_fails_abort_delay() {
     );
 
     for ticks in LENGTHS {
-        let (pass, controlling, blocking, error, first, queued) = run_for(ticks);
+        let (pass, controlling, blocking, error, first, queued, outcome, create_refused) =
+            run_for(ticks);
+        if create_refused && first.is_some() {
+            println!("            queue_create was REFUSED during this run");
+        }
         println!(
             "{:>10}  {:>6}  {:>12}  {:>12}  {:>6}  {:>7}",
             ticks,
@@ -108,6 +125,9 @@ fn which_condition_fails_abort_delay() {
             error,
             queued.map_or_else(|| "?".to_owned(), |q| q.to_string())
         );
+        if let Some(o) = outcome {
+            println!("            the send at pc 72 came back: {o}");
+        }
         if let Some((expected, blocked, pc)) = first {
             let direction = if blocked < expected {
                 "TOO SHORT -- what an abort firing early looks like"
@@ -134,11 +154,15 @@ fn which_condition_fails_abort_delay() {
         }
     }
 
-    let (_, controlling, _, _, first, queued) = run_for(hi);
+    let (_, controlling, _, _, first, queued, outcome, _) = run_for(hi);
     println!("  first failure appears at {hi} ticks (passes at {lo})");
     if let Some((expected, blocked, pc)) = first {
         println!("  expected {expected}, blocked {blocked}, at pc {pc}");
     }
+    if let Some(o) = outcome {
+        println!("  the send at pc 72 came back: {o}");
+    }
+    println!("  queue_create was refused during the run: {}", run_for(hi).7);
     println!(
         "  the one-deep queue holds {} message(s) at that length",
         queued.map_or_else(|| "?".to_owned(), |q| q.to_string())

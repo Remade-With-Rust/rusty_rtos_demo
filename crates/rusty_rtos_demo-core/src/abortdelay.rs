@@ -26,7 +26,7 @@
 
 use core::fmt;
 
-use rusty_rtos_core::error::Result;
+use rusty_rtos_core::error::{Error, Result};
 use rusty_rtos_core::handle::{EventGroupHandle, QueueHandle, StreamBufferHandle, TaskHandle};
 use rusty_rtos_kernel::kernel::NotifyAction;
 use rusty_rtos_kernel::queue::Wait;
@@ -109,6 +109,12 @@ pub struct State {
     /// schedule every later check is downstream of that, and the first is
     /// the one with a cause.
     pub first_margin_failure: Option<(u64, u64, u8)>,
+    /// How the first non-`Blocked` queue send at `pc 72` came back:
+    /// `"completed"` or `"refused: <kind>"`. See [`State::note_send_outcome`].
+    pub first_send_outcome: Option<&'static str>,
+    /// Set when `queue_create` is REFUSED, which `unwrap_or_default` would
+    /// otherwise turn silently into an invalid handle.
+    pub queue_create_refused: bool,
 }
 
 impl State {
@@ -116,6 +122,23 @@ impl State {
     fn note_margin_failure(&mut self, expected: u64, blocked: u64, pc: u8) {
         if self.first_margin_failure.is_none() {
             self.first_margin_failure = Some((expected, blocked, pc));
+        }
+    }
+
+    /// Remember how the first non-`Blocked` send came back.
+    ///
+    /// `pc 72`'s arm is `_`, which catches a completed send AND a refused
+    /// one, and both present at the margin check as `blocked 0` because no
+    /// time passes either way. They are different defects — a wrong queue
+    /// fill against a wrong handle — so the two are told apart here rather
+    /// than left to be guessed from the margin alone.
+    ///
+    /// A `&'static str` and not the `Error`: this is a scenario's state, it
+    /// lives in `.bss` on a microcontroller, and the name is what a reader
+    /// wants.
+    fn note_send_outcome(&mut self, outcome: &'static str) {
+        if self.first_send_outcome.is_none() {
+            self.first_send_outcome = Some(outcome);
         }
     }
 
@@ -565,7 +588,16 @@ impl Blocking {
 
             // --- prvTestAbortingQueueSend ---------------------------------
             70 => {
-                s.queue = k.queue_create(QUEUE_LENGTH).unwrap_or_default();
+                match k.queue_create(QUEUE_LENGTH) {
+                    Ok(q) => s.queue = q,
+                    Err(_) => {
+                        // unwrap_or_default() used to hide this, and an
+                        // invalid handle surfaces 100 ticks later as a
+                        // margin violation rather than as a refused create.
+                        s.queue_create_refused = true;
+                        s.queue = QueueHandle::default();
+                    }
+                }
                 self.pc = 71;
             }
             // The queue must be FULL for a send to block, and the C fills it
@@ -579,7 +611,35 @@ impl Blocking {
             },
             72 => match k.queue_send(s.queue, 0, MAX_BLOCK_TIME) {
                 Ok(Wait::Blocked) => return Step::Continue,
-                _ => self.checked(k, s, MAX_BLOCK_TIME, 73),
+                outcome => {
+                    // The arm used to be `_`, which could not tell a
+                    // completed send from a refused one — and both reach the
+                    // margin check as `blocked 0`.
+                    //
+                    // The outcome is recorded only if THIS call is the one
+                    // that fails the margin. `Err(Full)` is the CORRECT
+                    // answer for a send that blocked and then timed out, so
+                    // recording the first refusal seen would record a
+                    // healthy one and say nothing.
+                    let fresh = s.first_margin_failure.is_none();
+                    let described = match outcome {
+                        Ok(_) => "completed",
+                        Err(Error::Timeout) => "refused: Timeout",
+                        Err(Error::InvalidHandle) => "refused: InvalidHandle",
+                        Err(Error::Gone) => "refused: Gone",
+                        Err(Error::Full) => "refused: Full",
+                        Err(Error::Empty) => "refused: Empty",
+                        Err(Error::Busy) => "refused: Busy",
+                        Err(Error::NotActive) => "refused: NotActive",
+                        Err(Error::SchedulerSuspended) => "refused: SchedulerSuspended",
+                        Err(Error::NoMemory) => "refused: NoMemory",
+                        Err(_) => "refused: other",
+                    };
+                    self.checked(k, s, MAX_BLOCK_TIME, 73);
+                    if fresh && s.first_margin_failure.is_some() {
+                        s.note_send_outcome(described);
+                    }
+                }
             },
             73 => {
                 self.time_at_start = k.tick_count();
