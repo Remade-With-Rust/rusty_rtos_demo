@@ -115,6 +115,13 @@ pub struct State {
     /// Set when `queue_create` is REFUSED, which `unwrap_or_default` would
     /// otherwise turn silently into an invalid handle.
     pub queue_create_refused: bool,
+    /// How many times the scenario CREATED its queue, and how many times it
+    /// DELETED it. A scenario whose control flow skips a delete leaks
+    /// without any kernel defect at all, and the two counts say so directly.
+    pub queue_creates: u32,
+    /// How many times the scenario deleted it. Equal to the creates within
+    /// the one in flight, measured -- so a skipped delete is not the leak.
+    pub queue_deletes: u32,
 }
 
 impl State {
@@ -588,6 +595,7 @@ impl Blocking {
 
             // --- prvTestAbortingQueueSend ---------------------------------
             70 => {
+                s.queue_creates = s.queue_creates.wrapping_add(1);
                 match k.queue_create(QUEUE_LENGTH) {
                     Ok(q) => s.queue = q,
                     Err(_) => {
@@ -659,6 +667,7 @@ impl Blocking {
             },
             // vQueueDelete( xQueue ).
             77 => {
+                s.queue_deletes = s.queue_deletes.wrapping_add(1);
                 let _ = k.queue_delete(s.queue);
                 self.pc = 3;
             }
