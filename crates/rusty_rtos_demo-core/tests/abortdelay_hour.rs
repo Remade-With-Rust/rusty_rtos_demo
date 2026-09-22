@@ -155,7 +155,17 @@ fn which_condition_fails_abort_delay() {
     }
 
     let (_, controlling, _, _, first, queued, outcome, _) = run_for(hi);
-    println!("  first failure appears at {hi} ticks (passes at {lo})");
+    if first.is_none() {
+        // Nothing failed anywhere in the bracket, so the bisection has no
+        // boundary to find and `hi` is just its upper bound. Saying "first
+        // failure appears at {hi}" there would invent one -- which it did,
+        // once, after the storage leak was fixed and the scenario started
+        // passing.
+        println!("  NO failure anywhere in {lo}..={hi} -- the bisection has");
+        println!("  nothing to bracket, which is what a fixed defect looks like.");
+    } else {
+        println!("  first failure appears at {hi} ticks (passes at {lo})");
+    }
     if let Some((expected, blocked, pc)) = first {
         println!("  expected {expected}, blocked {blocked}, at pc {pc}");
     }
