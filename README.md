@@ -14,9 +14,13 @@ The conformance corpus for Kairos. FreeRTOS's own demo task files remade as
 Rust state machines, run beside the C kernel compiled from pinned sources, both
 sides emitting a trace line per kernel event. Identical means identical.
 
-- **The corpus**: 19 scenarios, each byte-identical to the C kernel for
-  100,000 ticks, on four architectures — host, ARMv7-M, RV32 and Xtensa LX7,
-  the last on silicon.
+- **The corpus**: **22 scenarios** identical to the C kernel's own trace on the
+  host (`kairos conform --all`), and the same corpus runs on **four
+  architectures** — host, ARMv7-M, RV32 and Xtensa LX7, the last on silicon.
+  On the two emulators it is **24 of 25** today; the one that diverges is named
+  under Known gaps, with its counters, because a gap with a number is a finding
+  and a gap without one is a rumour. The host runs 18 of them for **3,600,000
+  ticks**, an hour at the oracle's own tick rate.
 - **The method**: each scenario is a state machine because a task here owns no
   stack, which is what lets the same corpus run on a part with no context-switch
   port at all. The sim contract (`ORACLES.md`) fixes the tick, the exits and the
@@ -26,6 +30,15 @@ sides emitting a trace line per kernel event. Identical means identical.
 `AbortDelay` is 1,945 of 2,549 lines and the next line is a contract question
 rather than a kernel one — the C harness keys a queue's trace ordinal on its
 malloc address.
+
+`StreamBufferDemo` **diverges on both emulators** — identically, which rules
+out anything architecture-specific. Every counter matches and so does the line
+count: 2,000 ticks, 2,424 yields, 28,002 exits, 20,927 lines on both sides.
+Only the trace *text* differs, by **194 bytes across those 20,927 lines**. The
+host agrees with the C kernel; the 32-bit targets print about one extra
+character per hundred lines, which is what a value whose digit count depends on
+`size_of::<usize>()` looks like. A scheduling defect would have moved a
+counter. This one has not, and it is recorded rather than smoothed away.
 
 - This package's plan: [docs/plans/rusty_rtos_demo.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/plans/rusty_rtos_demo.md)
 - Every number: [docs/LEDGER.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/LEDGER.md)
@@ -40,10 +53,10 @@ flashed" means no chip has run it.
 
 | | |
 |---|---|
-| scenarios byte-identical to the C kernel | **19** |
-| ticks per scenario | 100,000 |
+| scenarios identical to the C kernel, on the host | **22** |
+| on each emulator, Cortex-M3 and RV32 | **24 of 25** |
 | soak, both emulators | RV32 18/18 in 58 min · M3 18/18 in 75 min |
-| on silicon (XIAO ESP32-S3) | **18/18** |
+| on silicon (XIAO ESP32-S3) | 18/18, measured 2026-09-11 against the corpus as it then stood |
 
 ```sh
 kairos conform --all --ticks 100000      # from the Kairos umbrella
@@ -71,10 +84,10 @@ and [`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port).
 
 | target | corpus |
 |---|---|
-| host (x86-64 Windows, Linux) | ✅ 19/19 |
-| `thumbv7m-none-eabi` | ✅ 18/18, QEMU `mps2-an385` |
-| `riscv32imac-unknown-none-elf` | ✅ 18/18, QEMU `virt` |
-| `xtensa-esp32s3-none-elf` | ✅ 18/18, **on silicon** |
+| host (x86-64 Windows, Linux) | ✅ **22 identical to the C kernel** |
+| `thumbv7m-none-eabi` | ⚠️ 24/25, QEMU `mps2-an385` — see Known gaps |
+| `riscv32imac-unknown-none-elf` | ⚠️ 24/25, QEMU `virt` — same one |
+| `xtensa-esp32s3-none-elf` | ✅ 18/18 **on silicon**, 2026-09-11 |
 
 ## Layout
 
@@ -110,7 +123,7 @@ a FreeRTOS developer already knows and prove every scheduling decision against
 the C kernel's own trace. `rusty_rtos_demo` is the evidence the rest of the family rests on.
 
 **Where this sits for Mata.** Kairos is the real-time layer on the device
-itself, and [`rusty_rtos_mqtt`](https://github.com/Remade-With-Rust/rusty_rtos_mqtt) is the way out of it.
+itself, and [`rusty_rtos_mqtt`](https://crates.io/crates/rusty_rtos_mqtt) is the way out of it.
 Paired with the **MATA distributed cloud**, robotics and sensor data has two
 routes — read it on the machine, or reach it through the cloud — with the same
 memory-safe crates at both ends.
@@ -120,13 +133,13 @@ The family:
 [`rusty_rtos_kernel`](https://crates.io/crates/rusty_rtos_kernel) (the scheduler),
 [`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port) (the architecture seam),
 [`rusty_rtos_heap`](https://crates.io/crates/rusty_rtos_heap) (the allocators),
-[`rusty_rtos_json`](https://github.com/Remade-With-Rust/rusty_rtos_json) (coreJSON),
-[`rusty_rtos_sntp`](https://github.com/Remade-With-Rust/rusty_rtos_sntp) (coreSNTP),
-[`rusty_rtos_mqtt`](https://github.com/Remade-With-Rust/rusty_rtos_mqtt) (coreMQTT),
-[`rusty_rtos_backoff`](https://github.com/Remade-With-Rust/rusty_rtos_backoff) (backoffAlgorithm),
-[`rusty_rtos-capi`](https://github.com/Remade-With-Rust/rusty_rtos-capi) (the C ABI) and
-[`rusty_rtos_demo`](https://github.com/Remade-With-Rust/rusty_rtos_demo) (the conformance corpus).
-The last six are on GitHub and not yet on crates.io. Also check out
+[`rusty_rtos_json`](https://crates.io/crates/rusty_rtos_json) (coreJSON),
+[`rusty_rtos_sntp`](https://crates.io/crates/rusty_rtos_sntp) (coreSNTP),
+[`rusty_rtos_mqtt`](https://crates.io/crates/rusty_rtos_mqtt) (coreMQTT),
+[`rusty_rtos_backoff`](https://crates.io/crates/rusty_rtos_backoff) (backoffAlgorithm),
+[`rusty_rtos-capi`](https://crates.io/crates/rusty_rtos-capi) (the C ABI) and
+[`rusty_rtos_demo`](https://crates.io/crates/rusty_rtos_demo) (the conformance corpus).
+All ten are on crates.io. Also check out
 the rest of **[github.com/remade-with-rust](https://github.com/remade-with-rust)**.
 
 ## About Mata Network
