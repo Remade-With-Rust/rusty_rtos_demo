@@ -96,9 +96,29 @@ pub struct State {
     /// The cycle counts the previous check saw.
     last_controlling: i32,
     last_blocking: i32,
+    /// The FIRST margin failure seen: `(expected, blocked, pc)`.
+    ///
+    /// `error` alone says a block came back wrong and not HOW, and the two
+    /// directions are different findings: `blocked < expected` is what an
+    /// abort firing early looks like, which is the interesting one;
+    /// `blocked > expected + ALLOWABLE_MARGIN` is an overrun. Recording the
+    /// first one costs three words of RAM and turns "AbortDelay fails the
+    /// hour" into a defect with a number.
+    ///
+    /// Only the first is kept: once the scenario is off its expected
+    /// schedule every later check is downstream of that, and the first is
+    /// the one with a cause.
+    pub first_margin_failure: Option<(u64, u64, u8)>,
 }
 
 impl State {
+    /// Remember the first margin failure and nothing after it.
+    fn note_margin_failure(&mut self, expected: u64, blocked: u64, pc: u8) {
+        if self.first_margin_failure.is_none() {
+            self.first_margin_failure = Some((expected, blocked, pc));
+        }
+    }
+
     /// `xAreAbortDelayTestTasksStillRunning`: both tasks must have moved
     /// on since the last check, and neither may have flagged an error.
     pub fn still_running(&mut self) -> bool {
@@ -214,11 +234,10 @@ impl Controlling {
             // prvCheckExpectedTimeIsWithinAnAcceptableMargin( xTimeAtStart,
             //     xMaxBlockTime + xMaxBlockTime + xHalfMaxBlockTime );
             7 => {
-                if outside_margin(
-                    self.time_at_start,
-                    k.tick_count(),
-                    MAX_BLOCK_TIME + MAX_BLOCK_TIME + HALF_MAX_BLOCK_TIME,
-                ) {
+                let expected = MAX_BLOCK_TIME + MAX_BLOCK_TIME + HALF_MAX_BLOCK_TIME;
+                let now = k.tick_count();
+                if outside_margin(self.time_at_start, now, expected) {
+                    s.note_margin_failure(expected, now.wrapping_sub(self.time_at_start), 7);
                     s.error = true;
                 }
                 self.test = self.test.wrapping_add(1);
@@ -249,7 +268,9 @@ impl Blocking {
     /// The three-part shape every helper has: block, check, advance. `pc`
     /// arms call this so the pattern is written once.
     fn checked(&mut self, k: &SimKernel<impl fmt::Write>, s: &mut State, expected: u64, next: u8) {
-        if outside_margin(self.time_at_start, k.tick_count(), expected) {
+        let now = k.tick_count();
+        if outside_margin(self.time_at_start, now, expected) {
+            s.note_margin_failure(expected, now.wrapping_sub(self.time_at_start), self.pc);
             s.error = true;
         }
         self.pc = next;

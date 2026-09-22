@@ -72,6 +72,17 @@ fn which_condition_fails_abort_delay() {
             state.blocking_cycles,
             state.error
         );
+
+        if let Some((expected, blocked, pc)) = state.first_margin_failure {
+            let direction = if blocked < expected {
+                "TOO SHORT -- what an abort firing early looks like"
+            } else {
+                "too long -- an overrun past the margin"
+            };
+            println!(
+                "            first margin failure: expected {expected}, blocked {blocked}, pc {pc} -- {direction}"
+            );
+        }
     }
 
     println!();
