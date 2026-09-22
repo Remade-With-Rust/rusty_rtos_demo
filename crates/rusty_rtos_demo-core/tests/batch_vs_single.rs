@@ -120,12 +120,42 @@ fn does_holding_several_at_once_lose_a_slot() {
     });
     println!("{:<34}  {b3:>7}  {a3:>7}  {:>6}", "batch: fill, drain newest-first", b3.saturating_sub(a3));
 
+    // 4. the fragmenting shape: create three, delete the MIDDLE one.
+    //
+    // The end-of-arena-only fix cannot reclaim this -- the freed extent is
+    // not the last allocation -- so it is what distinguishes a partial fix
+    // from a complete one.
+    let (b4, a4) = run(|k| {
+        let mut held = Vec::new();
+        for _ in 0..3 {
+            if let Ok(q) = k.queue_create(1) {
+                held.push(q);
+            }
+        }
+        if held.len() == 3 {
+            let _ = k.queue_delete(held[1]);
+            let _ = k.queue_delete(held[0]);
+            let _ = k.queue_delete(held[2]);
+        }
+    });
+    println!("{:<34}  {b4:>7}  {a4:>7}  {:>6}", "fragmenting: delete middle first", b4.saturating_sub(a4));
+
     println!();
     let single = b1.saturating_sub(a1);
     let oldest = b2.saturating_sub(a2);
     let newest = b3.saturating_sub(a3);
 
-    if single == 0 && (oldest > 0 || newest > 0) {
+    let frag = b4.saturating_sub(a4);
+    if frag > 0 {
+        println!("STRANDED: the fragmenting shape lost {frag} of {ROUNDS} rounds.");
+        println!("An extent freed out of order is not the last allocation, so an");
+        println!("end-of-arena-only fix cannot take it back. That is the known");
+        println!("limit, and it is measured rather than assumed.");
+    } else if single == 0 && oldest == 0 && newest == 0 {
+        println!("ALL FOUR hold, including the fragmenting shape -- so an extent");
+        println!("freed out of order is reclaimed too, and the allocator is");
+        println!("complete rather than only covering create-then-delete.");
+    } else if single == 0 && (oldest > 0 || newest > 0) {
         println!("NAMED: one at a time reclaims; holding several at once does not.");
         println!("oldest-first lost {oldest}, newest-first lost {newest}, over {ROUNDS} rounds.");
         println!();
