@@ -54,6 +54,7 @@ flashed" means no chip has run it.
 | | |
 |---|---|
 | scenarios identical to the C kernel, on the host | **22** |
+| ticks per scenario | 2,000 pinned · verified again at **100,000** |
 | on each emulator, Cortex-M3 and RV32 | **24 of 25** |
 | soak, both emulators | RV32 18/18 in 58 min · M3 18/18 in 75 min |
 | on silicon (XIAO ESP32-S3) | 18/18, measured 2026-09-11 against the corpus as it then stood |
