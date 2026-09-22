@@ -1,0 +1,15 @@
+# The Xtensa target has no prebuilt sysroot on the esp toolchain, so `core`
+# is built from source. No `alloc`: this cell allocates nothing, and that is
+# one of the things it proves.
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+[target.riscv32imac-unknown-none-elf]
+runner = "espflash flash --monitor"
+rustflags = [
+    # esp-hal supplies the whole link map -- and it only takes effect if
+    # `linkall.x` is named. Without it the GCC default script links a binary
+    # that builds and flashes nowhere: `.flash.appdesc` is never placed, and
+    # espflash refuses the image with "appdesc segment not found".
+    "-C", "link-arg=-Tlinkall.x",
+]

@@ -32,9 +32,10 @@ Rules:
 
 | cell | what it proves | needs |
 |---|---|---|
-| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | all 18 corpus scenarios byte-identical to the C kernel on **ARMv7-M** | nothing — `qemu-system-arm` |
-| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same 18, on **RV32** | nothing — `qemu-system-riscv32` |
+| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | the corpus on **ARMv7-M**; the hour is **24 of 25** (`AbortDelay` fails) | nothing — `qemu-system-arm` |
+| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same on **RV32**; the hour is **24 of 25**, the same one failing | nothing — `qemu-system-riscv32` |
 | [`xiao-s3-corpus`](xiao-s3-corpus) | the same 18, on **Xtensa LX7 — SILICON, not an emulator** | a XIAO ESP32-S3 on a serial port, and the `esp` toolchain. Never started by a gate: its runner is `espflash` |
+| [`esp32c6-corpus`](esp32c6-corpus) | the same on **RV32 SILICON** — K3's third hour. **BUILDS, NEVER RUN**: no C6 has been on this bench, so it carries no numbers. Builds on STABLE, with and without `--features soak` | an ESP32-C6 on a serial port. Never started by a gate: its runner is `espflash` |
 
 Both are gates: each ends by calling `debug::exit`, so the guest's verdict
 becomes QEMU's exit code, and `kairos check rusty_rtos_demo --qemu`
