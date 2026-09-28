@@ -5,8 +5,9 @@
 > `soak` feature, and has never been flashed. It carries **no numbers**.
 
 K3 asks for the full corpus check task to pass **an hour each on M3-qemu,
-RV32-qemu and a C6**. The first two are measured — 24 of 25 on each,
-`AbortDelay` the only failure — and this is the cell for the third.
+RV32-qemu and a C6**. The first two are measured — **25 of 25 on each**, at
+the pinned length and at the hour, every row identical between them — and this
+is the cell for the third.
 
 ```sh
 cargo run --release                     # the pinned 2,000-tick conformance run

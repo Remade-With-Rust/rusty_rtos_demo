@@ -91,6 +91,7 @@ pub type SimKernel<W> = Kernel<
     BYTES,
     TIMERS,
     GROUPS,
+    { <PosixDemoConfig as Config>::TIMER_QUEUE_LENGTH },
 >;
 
 /// `vApplicationTickHook`: the interrupt half of whichever scenario is
@@ -856,7 +857,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
     /// panicking; the run then ends at [`Body::Empty`] with a failed
     /// verdict, which is visible where a panic would not be.
     pub fn attach(&mut self, task: TaskHandle, body: Body<'a>) {
-        if let Some(slot) = self.bodies.get_mut(usize::from(task.index())) {
+        if let Some(slot) = self.bodies.get_mut(task.index() as usize) {
             *slot = body;
         }
     }
@@ -908,7 +909,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
         if k.resume_pending() {
             return Step::Continue;
         }
-        let index = usize::from(k.current().index());
+        let index = k.current().index() as usize;
         let Some(body) = bodies.get_mut(index) else {
             return Step::Finish(false);
         };
@@ -939,7 +940,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             (step, spawned)
         };
         if let Some((task, spawned)) = spawned {
-            if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
+            if let Some(slot) = bodies.get_mut(task.index() as usize) {
                 *slot = spawned.into_body();
             }
         }
@@ -1010,7 +1011,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                     if k.resume_pending() {
                         break 'step Step::Continue;
                     }
-                    let index = usize::from(k.current().index());
+                    let index = k.current().index() as usize;
                     let Some(body) = bodies.get_mut(index) else {
                         break 'step Step::Finish(false);
                     };
@@ -1021,7 +1022,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
                         // the run started.
                         Stepped::Spawned(stepped) => {
                             if let Some((task, spawned)) = s.spawn.take() {
-                                if let Some(slot) = bodies.get_mut(usize::from(task.index())) {
+                                if let Some(slot) = bodies.get_mut(task.index() as usize) {
                                     *slot = spawned.into_body();
                                 }
                             }

@@ -463,7 +463,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             // `<tick> <EVENT> q<n> <length>`
             Event::QueueCreate { queue, length, .. } => {
-                let n = self.bind(KIND_QUEUE, queue.index());
+                let n = self.bind(KIND_QUEUE, queue.index() as u16);
                 self.head(tick, name);
                 self.raw(" q");
                 self.num(u64::from(n));
@@ -483,7 +483,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             | Event::BlockingOnQueueSend { queue, .. }
             | Event::BlockingOnQueueReceive { queue, .. }
             | Event::BlockingOnQueuePeek { queue, .. } => {
-                let n = self.ordinal(KIND_QUEUE, queue.index());
+                let n = self.ordinal(KIND_QUEUE, queue.index() as u16);
                 self.num(tick);
                 self.raw(" ");
                 self.raw(name);
@@ -494,7 +494,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             // `<tick> <EVENT> g<n> [<arg>...]`
             Event::EventGroupCreate { group } => {
-                let n = self.bind(KIND_GROUP, group.index());
+                let n = self.bind(KIND_GROUP, group.index() as u16);
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -502,7 +502,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.end_line();
             }
             Event::EventGroupSetBits { group, bits } => {
-                let n = self.ordinal(KIND_GROUP, group.index());
+                let n = self.ordinal(KIND_GROUP, group.index() as u16);
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -512,7 +512,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 self.end_line();
             }
             Event::EventGroupWaitBitsBlock { group, bits } => {
-                let n = self.ordinal(KIND_GROUP, group.index());
+                let n = self.ordinal(KIND_GROUP, group.index() as u16);
                 self.head(tick, name);
                 self.raw(" g");
                 self.num(u64::from(n));
@@ -526,7 +526,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 bits,
                 timed_out,
             } => {
-                let n = self.ordinal(KIND_GROUP, group.index());
+                let n = self.ordinal(KIND_GROUP, group.index() as u16);
                 let t = u8::from(timed_out);
                 self.head(tick, name);
                 self.raw(" g");
@@ -543,7 +543,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
                 buffer,
                 is_message_buffer,
             } => {
-                let n = self.bind(KIND_BUFFER, buffer.index());
+                let n = self.bind(KIND_BUFFER, buffer.index() as u16);
                 let m = u8::from(is_message_buffer);
                 self.head(tick, name);
                 self.raw(" s");
@@ -555,7 +555,7 @@ impl<W: fmt::Write> Trace for LineTrace<W> {
             }
             Event::StreamBufferSend { buffer, bytes }
             | Event::StreamBufferReceive { buffer, bytes } => {
-                let n = self.ordinal(KIND_BUFFER, buffer.index());
+                let n = self.ordinal(KIND_BUFFER, buffer.index() as u16);
                 self.head(tick, name);
                 self.raw(" s");
                 self.num(u64::from(n));

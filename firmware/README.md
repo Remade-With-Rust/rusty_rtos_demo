@@ -32,9 +32,9 @@ Rules:
 
 | cell | what it proves | needs |
 |---|---|---|
-| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | the corpus on **ARMv7-M**; the hour is **24 of 25** (`AbortDelay` fails) | nothing — `qemu-system-arm` |
-| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same on **RV32**; the hour is **24 of 25**, the same one failing | nothing — `qemu-system-riscv32` |
-| [`xiao-s3-corpus`](xiao-s3-corpus) | the same 18, on **Xtensa LX7 — SILICON, not an emulator** | a XIAO ESP32-S3 on a serial port, and the `esp` toolchain. Never started by a gate: its runner is `espflash` |
+| [`mps2-an385-qemu-corpus`](mps2-an385-qemu-corpus) | the corpus on **ARMv7-M**: **25 of 25** at the pinned length, and the hour is **25 of 25** (≈11.5 min, contended) | nothing — `qemu-system-arm` |
+| [`riscv32-qemu-corpus`](riscv32-qemu-corpus) | the same on **RV32**: **25 of 25** at the pinned length, and the hour is **25 of 25** (≈11.5 min, contended). Every row of both runs is identical to the M3's, field for field | nothing — `qemu-system-riscv32` |
+| [`xiao-s3-corpus`](xiao-s3-corpus) | the same **25 of 25**, on **Xtensa LX7 — SILICON, not an emulator**; rows identical to both QEMU cells, field for field, **at the pinned length AND at the hour** (≈6h of board time) | a XIAO ESP32-S3 on a serial port, and the `esp` toolchain. Never started by a gate: its runner is `espflash` |
 | [`esp32c6-corpus`](esp32c6-corpus) | the same on **RV32 SILICON** — K3's third hour. **BUILDS, NEVER RUN**: no C6 has been on this bench, so it carries no numbers. Builds on STABLE, with and without `--features soak` | an ESP32-C6 on a serial port. Never started by a gate: its runner is `espflash` |
 
 Both are gates: each ends by calling `debug::exit`, so the guest's verdict

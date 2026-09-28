@@ -112,6 +112,7 @@ const fn soak_ticks() -> u64 {
 ///
 /// ```sh
 /// KAIROS_SOAK_ONLY=death cargo run --release --features soak
+/// KAIROS_SOAK_ONLY=semtest,countsem,recmutex cargo run --release --features soak
 /// ```
 ///
 /// The full soak is all 18 scenarios at 3,600,000 ticks, which is hours on
@@ -130,7 +131,65 @@ const SOAK_ONLY: Option<&str> = option_env!("KAIROS_SOAK_ONLY");
 use rusty_rtos_demo_core::runner::{Runner, Shared};
 use rusty_rtos_demo_core::step_limit_for;
 
+/// How many names `KAIROS_SOAK_ONLY` lists, counted the same way
+/// [`names_contains`] matches them.
+///
+/// The guard below needs this because extending the filter from one name to
+/// a list broke it: `matched == 0` catches a typo when there is one name and
+/// misses it entirely when there are two, so `PollQ,NoSuchScenario` ran PollQ
+/// and reported **PASS -- 1 scenario**. A gate that reports a pass for work
+/// it did not do is the one failure this harness has already had once.
+#[cfg(feature = "soak")]
+fn names_count(list: &str) -> u32 {
+    let mut n = 0;
+    let mut rest = list;
+    loop {
+        let (head, tail) = match rest.find(',') {
+            Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+            None => (rest, None),
+        };
+        if !head.trim().is_empty() {
+            n += 1;
+        }
+        match tail {
+            Some(t) => rest = t,
+            None => return n,
+        }
+    }
+}
+
+/// Does the comma-separated `KAIROS_SOAK_ONLY` list name this scenario?
+///
+/// A list rather than one name, because the reason this knob exists applies
+/// to several as readily as to one: when an hour is missing for a handful of
+/// scenarios, re-running the rest to reach them is the same waste. Splitting
+/// a long soak into chunks needs exactly this, and on a part each chunk costs
+/// a flash, so one name per flash is not a workable recovery.
+///
+/// Exact match per element, whitespace around a name ignored, empty elements
+/// skipped so `"a,,b"` and a trailing comma are not silently a third name
+/// that matches nothing. A name in the list that matches no scenario still
+/// makes `matched` short, which is the FAIL below.
+#[cfg(feature = "soak")]
+fn names_contains(list: &str, name: &str) -> bool {
+    let mut rest = list;
+    loop {
+        let (head, tail) = match rest.find(',') {
+            Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+            None => (rest, None),
+        };
+        if head.trim() == name {
+            return true;
+        }
+        match tail {
+            Some(t) => rest = t,
+            None => return false,
+        }
+    }
+}
+
 #[entry]
+
 fn main() -> ! {
     hprintln!();
     hprintln!("=== the Kairos conformance corpus on RV32 (QEMU virt) ===");
@@ -150,7 +209,7 @@ fn main() -> ! {
         // vacuous pass.
         #[cfg(feature = "soak")]
         if let Some(only) = SOAK_ONLY {
-            if pin.name != only {
+            if !names_contains(only, pin.name) {
                 continue;
             }
             matched += 1;
@@ -242,8 +301,13 @@ fn main() -> ! {
             // A filter that matched nothing must not read as a pass: an
             // empty run trivially has zero failures, which is exactly the
             // shape of a gate that tests nothing.
-            if SOAK_ONLY.is_some() && matched == 0 {
-                hprintln!("RESULT: FAIL -- KAIROS_SOAK_ONLY named no scenario in the table");
+            // Nested rather than a let-chain: these cells are edition 2021.
+            let named_a_ghost = match SOAK_ONLY {
+                Some(only) => matched != names_count(only),
+                None => false,
+            };
+            if named_a_ghost {
+                hprintln!("RESULT: FAIL -- KAIROS_SOAK_ONLY named a scenario not in the table");
                 debug::exit(debug::EXIT_FAILURE);
             }
             let ran = if SOAK_ONLY.is_some() {

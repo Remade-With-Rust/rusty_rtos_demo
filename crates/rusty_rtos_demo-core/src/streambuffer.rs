@@ -46,6 +46,44 @@ use crate::runner::{self, Runner, Shared, SimKernel, Spawn, Step, TickIsr};
 
 /// `sbSTREAM_BUFFER_LENGTH_BYTES`.
 pub const BUFFER_BYTES: usize = 30;
+
+/// `sizeof( size_t )` **as the oracle compiled it**, which is not the same
+/// thing as `size_of::<usize>()` here.
+///
+/// The echo client's send length wraps at `BUFFER_BYTES - sizeof(size_t)`.
+/// The C that defines the pinned trace is the `Posix_GCC` demo on x86-64,
+/// where that is 30 - 8 = 22. Spelled as the RUNNING machine's pointer
+/// width it is 22 on the host and **26 on every 32-bit target**, so the
+/// scenario sends a different string on a chip than it does on the machine
+/// that pinned it -- and the counters do not notice, because the number of
+/// sends is unchanged and only the payload length moves.
+///
+/// That is what it did, and it is what made `StreamBufferDemo` the one
+/// scenario failing the corpus check on both emulators (2026-09-21): same
+/// ticks, same yields, same exits, same 20,927 lines, 194 bytes of trace
+/// text apart. A constant that follows the compiler is a constant the pins
+/// cannot survive being moved, so this one does not follow it.
+///
+/// It is the same reasoning as [`PosixDemoConfig::MESSAGE_LENGTH_BYTES`],
+/// and deliberately a separate constant: that one is
+/// `sizeof(configMESSAGE_BUFFER_LENGTH_TYPE)`, which merely DEFAULTS to
+/// `size_t`, and a configuration is free to move one without the other.
+///
+/// [`PosixDemoConfig::MESSAGE_LENGTH_BYTES`]: rusty_rtos_core::config::PosixDemoConfig
+const ORACLE_SIZE_T: usize = 8;
+
+// The guard, and it is a real one rather than a restatement.
+//
+// A host test cannot catch this: on x86-64 the wrong expression and the right
+// one are both 8, which is why the defect lived through every host gate and
+// was found only by a 32-bit cell. This assert is evaluated PER TARGET, so on
+// the thumbv7m and riscv32 builds the corpus cells make, writing
+// `size_of::<usize>()` here again stops the build with this message instead
+// of quietly producing a different trace.
+const _: () = assert!(
+    ORACLE_SIZE_T == 8,
+    "ORACLE_SIZE_T is the ORACLE's sizeof(size_t): 8, on the x86-64 Posix_GCC build the pins come from. It must not follow the TARGET's pointer width -- doing so sends a different string on a 32-bit chip and breaks conformance there while every host gate still passes."
+);
 /// `sbSTREAM_BUFFER_LENGTH_ONE`.
 pub const BUFFER_LENGTH_ONE: usize = 1;
 /// `sbTRIGGER_LEVEL_1`.
@@ -670,9 +708,12 @@ impl EchoClient {
             // `sizeof( size_t )` is 8 on the 64-bit oracle, so the length
             // walks 1..=22 and then starts again. None of this touches the
             // kernel, so it is one arm however many statements it is.
+            //
+            // The width is `ORACLE_SIZE_T`, not `size_of::<usize>()`: see
+            // that constant for what the difference cost.
             3 => {
                 self.send_length = self.send_length.saturating_add(1);
-                if self.send_length > BUFFER_BYTES.saturating_sub(core::mem::size_of::<usize>()) {
+                if self.send_length > BUFFER_BYTES.saturating_sub(ORACLE_SIZE_T) {
                     self.send_length = 1;
                 }
                 self.to_send = [0; BUFFER_BYTES];

@@ -70,13 +70,14 @@ const RUN_TICKS: u64 = soak_ticks();
 ///
 /// ```sh
 /// KAIROS_SOAK_ONLY=death cargo build --release --features soak
+/// KAIROS_SOAK_ONLY=semtest,countsem,recmutex cargo build --release --features soak
 /// ```
 ///
-/// The full soak is all 18 scenarios at 3,600,000 ticks. On silicon that is
-/// hours, and `semtest` alone is 78% of it -- it runs 345 state-machine
-/// steps per unit of sim time against a corpus average of 6.3. When only
-/// one scenario's hour is missing, re-running the other seventeen to reach
-/// it is waste.
+/// The full soak is every scenario in the table at 3,600,000 ticks. On
+/// silicon that is hours, and `semtest` alone is 78% of it -- it runs 345
+/// state-machine steps per unit of sim time against a corpus average of 6.3.
+/// When only one scenario's hour is missing, re-running the rest to reach it
+/// is waste.
 ///
 /// `option_env!` resolves at COMPILE time, so an unset variable leaves the
 /// full soak exactly as it was. Unknown names FAIL rather than silently
@@ -113,7 +114,65 @@ const fn soak_ticks() -> u64 {
 }
 
 
+/// How many names `KAIROS_SOAK_ONLY` lists, counted the same way
+/// [`names_contains`] matches them.
+///
+/// The guard below needs this because extending the filter from one name to
+/// a list broke it: `matched == 0` catches a typo when there is one name and
+/// misses it entirely when there are two, so `PollQ,NoSuchScenario` ran PollQ
+/// and reported **PASS -- 1 scenario**. A gate that reports a pass for work
+/// it did not do is the one failure this harness has already had once.
+#[cfg(feature = "soak")]
+fn names_count(list: &str) -> u32 {
+    let mut n = 0;
+    let mut rest = list;
+    loop {
+        let (head, tail) = match rest.find(',') {
+            Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+            None => (rest, None),
+        };
+        if !head.trim().is_empty() {
+            n += 1;
+        }
+        match tail {
+            Some(t) => rest = t,
+            None => return n,
+        }
+    }
+}
+
+/// Does the comma-separated `KAIROS_SOAK_ONLY` list name this scenario?
+///
+/// A list rather than one name, because the reason this knob exists applies
+/// to several as readily as to one: when an hour is missing for a handful of
+/// scenarios, re-running the rest to reach them is the same waste. Splitting
+/// a long soak into chunks needs exactly this, and on a part each chunk costs
+/// a flash, so one name per flash is not a workable recovery.
+///
+/// Exact match per element, whitespace around a name ignored, empty elements
+/// skipped so `"a,,b"` and a trailing comma are not silently a third name
+/// that matches nothing. A name in the list that matches no scenario still
+/// makes `matched` short, which is the FAIL below.
+#[cfg(feature = "soak")]
+fn names_contains(list: &str, name: &str) -> bool {
+    let mut rest = list;
+    loop {
+        let (head, tail) = match rest.find(',') {
+            Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+            None => (rest, None),
+        };
+        if head.trim() == name {
+            return true;
+        }
+        match tail {
+            Some(t) => rest = t,
+            None => return false,
+        }
+    }
+}
+
 #[esp_hal::main]
+
 fn main() -> ! {
     let _p = esp_hal::init(esp_hal::Config::default());
 
@@ -134,7 +193,7 @@ fn main() -> ! {
         // anything. `matched` turns a typo into a FAIL below.
         #[cfg(feature = "soak")]
         if let Some(only) = SOAK_ONLY {
-            if pin.name != only {
+            if !names_contains(only, pin.name) {
                 continue;
             }
             matched += 1;
@@ -243,8 +302,13 @@ fn main() -> ! {
             // A filter that matched nothing must not read as a pass: an
             // empty run trivially has zero failures, which is exactly the
             // shape of a gate that tests nothing.
-            if SOAK_ONLY.is_some() && matched == 0 {
-                println!("RESULT: FAIL -- KAIROS_SOAK_ONLY named no scenario in the table");
+            // Nested rather than a let-chain: these cells are edition 2021.
+            let named_a_ghost = match SOAK_ONLY {
+                Some(only) => matched != names_count(only),
+                None => false,
+            };
+            if named_a_ghost {
+                println!("RESULT: FAIL -- KAIROS_SOAK_ONLY named a scenario not in the table");
                 loop {
                     core::hint::spin_loop();
                 }

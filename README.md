@@ -17,10 +17,9 @@ sides emitting a trace line per kernel event. Identical means identical.
 - **The corpus**: **22 scenarios** identical to the C kernel's own trace on the
   host (`kairos conform --all`), and the same corpus runs on **four
   architectures** — host, ARMv7-M, RV32 and Xtensa LX7, the last on silicon.
-  On the two emulators it is **24 of 25** today; the one that diverges is named
-  under Known gaps, with its counters, because a gap with a number is a finding
-  and a gap without one is a rumour. The host runs 18 of them for **3,600,000
-  ticks**, an hour at the oracle's own tick rate.
+  On the two emulators it is **25 of 25**, and every row is identical field for
+  field between them. The host runs 18 of them for **3,600,000 ticks**, an hour
+  at the oracle's own tick rate.
 - **The method**: each scenario is a state machine because a task here owns no
   stack, which is what lets the same corpus run on a part with no context-switch
   port at all. The sim contract (`ORACLES.md`) fixes the tick, the exits and the
@@ -31,14 +30,22 @@ sides emitting a trace line per kernel event. Identical means identical.
 rather than a kernel one — the C harness keys a queue's trace ordinal on its
 malloc address.
 
-`StreamBufferDemo` **diverges on both emulators** — identically, which rules
-out anything architecture-specific. Every counter matches and so does the line
-count: 2,000 ticks, 2,424 yields, 28,002 exits, 20,927 lines on both sides.
-Only the trace *text* differs, by **194 bytes across those 20,927 lines**. The
-host agrees with the C kernel; the 32-bit targets print about one extra
-character per hundred lines, which is what a value whose digit count depends on
-`size_of::<usize>()` looks like. A scheduling defect would have moved a
-counter. This one has not, and it is recorded rather than smoothed away.
+`StreamBufferDemo` used to diverge on both emulators and **no longer does**
+(2026-09-21). The cause was in the scenario, not the kernel: the echo client's
+send length wraps at `sbSTREAM_BUFFER_LENGTH_BYTES - sizeof(size_t)`, and
+`sizeof(size_t)` was spelled as the *running machine's* pointer width instead
+of the *oracle's*, so the length walked 1..=22 on the 64-bit host and 1..=26 on
+every 32-bit target. It sent different data, and the counters could not see it
+because the number of sends never changed. A `const _: () = assert!(..)`
+evaluated per target now fails the 32-bit build if that constant ever follows
+the compiler again — a host test cannot catch it, which is why it survived
+every host gate.
+
+It is proved on a **part**, not only under emulation: the XIAO ESP32-S3 cell
+was re-flashed at 25 scenarios on 2026-09-23 and passes, with every row
+identical field for field to both emulators. Xtensa LX7 is a real 32-bit
+target and would have diverged before the fix, so that run is the one that
+could have refuted the diagnosis.
 
 - This package's plan: [docs/plans/rusty_rtos_demo.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/plans/rusty_rtos_demo.md)
 - Every number: [docs/LEDGER.md](https://github.com/Remade-With-Rust/rusty_rtos_demo/blob/main/docs/LEDGER.md)
@@ -55,9 +62,10 @@ flashed" means no chip has run it.
 |---|---|
 | scenarios identical to the C kernel, on the host | **22** |
 | ticks per scenario | 2,000 pinned · verified again at **100,000** |
-| on each emulator, Cortex-M3 and RV32 | **24 of 25** |
-| soak, both emulators | RV32 18/18 in 58 min · M3 18/18 in 75 min |
-| on silicon (XIAO ESP32-S3) | 18/18, measured 2026-09-11 against the corpus as it then stood |
+| on each emulator, Cortex-M3 and RV32 | **25 of 25**, identical field for field |
+| soak, both emulators | **RV32 25/25 · M3 25/25**, identical field for field (≈11.5 min each, run concurrently — a contended wall, not a timing) |
+| soak, **on silicon** | **25/25** at 3,600,000 ticks on a XIAO ESP32-S3 — every row identical to both emulator hours (2026-09-23) |
+| on silicon (XIAO ESP32-S3) | **25/25**, re-run 2026-09-23 — identical field for field to both emulators |
 
 ```sh
 kairos conform --all --ticks 100000      # from the Kairos umbrella
@@ -86,9 +94,9 @@ and [`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port).
 | target | corpus |
 |---|---|
 | host (x86-64 Windows, Linux) | ✅ **22 identical to the C kernel** |
-| `thumbv7m-none-eabi` | ⚠️ 24/25, QEMU `mps2-an385` — see Known gaps |
-| `riscv32imac-unknown-none-elf` | ⚠️ 24/25, QEMU `virt` — same one |
-| `xtensa-esp32s3-none-elf` | ✅ 18/18 **on silicon**, 2026-09-11 |
+| `thumbv7m-none-eabi` | ✅ **25/25**, QEMU `mps2-an385` |
+| `riscv32imac-unknown-none-elf` | ✅ **25/25**, QEMU `virt` |
+| `xtensa-esp32s3-none-elf` | ✅ **25/25 on silicon**, 2026-09-23 |
 
 ## Layout
 

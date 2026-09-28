@@ -3,6 +3,12 @@
 The third architecture cell for the Kairos corpus, and the **first on a
 part rather than an emulator**.
 
+**25 of 25, re-run 2026-09-23.** The earlier record here was 18/18 from
+2026-09-11 — true as measured, but taken when the corpus was 18 scenarios.
+`StreamBufferDemo` joined as the 22nd and carried a defect that only showed on
+a 32-bit target, so this cell was the one place it could be confirmed fixed on
+real silicon rather than under emulation.
+
 ```
 === the Kairos conformance corpus on ESP32-S3 (Xtensa, SILICON) ===
 target  xtensa-esp32s3-none-elf, no_std, NO alloc, no per-task stack
@@ -11,7 +17,7 @@ dynamic                ok    ticks=2000 yields=3589 exits=21346 lines=24402 byte
 ...
 death                  ok    ticks=4000 yields=55 exits=3890 lines=4369 bytes=129014
 
-RESULT: PASS -- 18 scenarios byte-identical to the C kernel
+RESULT: PASS -- 25 scenarios byte-identical to the C kernel
         on ESP32-S3 SILICON, at 2000 ticks or each pin's own floor.
 ```
 
