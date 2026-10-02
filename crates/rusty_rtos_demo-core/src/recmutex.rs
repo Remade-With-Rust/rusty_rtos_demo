@@ -64,6 +64,13 @@ pub struct State {
     pub polling_cycles: u32,
     /// The three `uxLast*Cycles` statics inside the check function.
     pub last: [u32; 3],
+    /// A polling-task `configASSERT` that failed, by its `recmutex.c` line,
+    /// waiting for the task's next step: the call it checks returned and,
+    /// on two cores, a turn ends there (`crate::smp`), so the C evaluates the
+    /// assert when the task next runs. Zero when none is due.
+    pub assert_due: u32,
+    /// The assert that fired, by line; the run ends with it.
+    pub assert_line: u32,
 }
 
 impl State {
@@ -105,14 +112,19 @@ pub enum Body {
 impl Body {
     #[inline(never)]
     pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
-        let runner::State::RecMutex(s) = &mut s.state else {
+        let runner::State::RecMutex(state) = &mut s.state else {
             return Step::Finish(false);
         };
-        match self {
-            Self::Controlling(b) => b.step(k, s),
-            Self::Blocking(b) => b.step(k, s),
-            Self::Polling(b) => b.step(k, s),
+        let step = match self {
+            Self::Controlling(b) => b.step(k, state),
+            Self::Blocking(b) => b.step(k, state),
+            Self::Polling(b) => b.step(k, state),
+        };
+        if state.assert_line != 0 {
+            s.assert = Some(("recmutex.c", state.assert_line));
+            return Step::Finish(false);
         }
+        step
     }
 }
 
@@ -276,6 +288,12 @@ pub struct Polling {
 
 impl Polling {
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut State) -> Step {
+        // configASSERT: a check the previous step failed fires as this task
+        // runs again. On one core none of them ever fails.
+        if s.assert_due != 0 {
+            s.assert_line = s.assert_due;
+            return Step::Continue;
+        }
         match self.pc {
             // if( xSemaphoreTakeRecursive( xMutex, recmuNO_DELAY ) == pdPASS )
             0 => match k.mutex_take_recursive(s.mutex, NO_DELAY) {
@@ -288,6 +306,7 @@ impl Polling {
             1 => {
                 if k.task_state_get(s.controlling) != Ok(TaskState::Suspended) {
                     s.error = true;
+                    s.assert_due = 285;
                 }
                 self.pc = 2;
             }
@@ -295,6 +314,7 @@ impl Polling {
             2 => {
                 if k.task_state_get(s.blocking) != Ok(TaskState::Suspended) {
                     s.error = true;
+                    s.assert_due = 286;
                 }
                 self.pc = 3;
             }
@@ -334,6 +354,7 @@ impl Polling {
             8 => {
                 if k.task_priority_get(None) != Ok(CONTROLLING_PRIORITY) {
                     s.error = true;
+                    s.assert_due = 330;
                 }
                 self.pc = 9;
             }
@@ -341,6 +362,7 @@ impl Polling {
             9 => {
                 if k.task_state_get(s.controlling) != Ok(TaskState::Blocked) {
                     s.error = true;
+                    s.assert_due = 336;
                 }
                 self.pc = 10;
             }
@@ -348,6 +370,7 @@ impl Polling {
             10 => {
                 if k.task_state_get(s.blocking) != Ok(TaskState::Blocked) {
                     s.error = true;
+                    s.assert_due = 337;
                 }
                 self.pc = 11;
             }
@@ -363,6 +386,7 @@ impl Polling {
             _ => {
                 if k.task_priority_get(None) != Ok(POLLING_PRIORITY) {
                     s.error = true;
+                    s.assert_due = 350;
                 }
                 self.pc = 0;
             }

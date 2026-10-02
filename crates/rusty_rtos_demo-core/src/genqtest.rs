@@ -65,6 +65,11 @@ pub struct State {
     pub second_medium: TaskHandle,
     /// `xErrorDetected`.
     pub error: bool,
+    /// The line of a `configASSERT( xErrorDetected == pdFALSE )` that
+    /// failed, or zero. On one core neither ever fires; on two the mutex
+    /// test is not safe (another core runs while this one expects to own the
+    /// CPU) and the C stops at 564.
+    pub assert_line: u32,
     /// `ulLoopCounter`, the queue test's.
     pub loops: u32,
     /// `ulLoopCounter2`, the mutex test's.
@@ -115,12 +120,17 @@ impl Body {
         let runner::State::GenQTest(state) = &mut s.state else {
             return Step::Finish(false);
         };
-        match self {
+        let step = match self {
             Self::GenQ(b) => b.step(k, state),
             Self::MuLow(b) => b.step(k, state),
             Self::MuMed(b) => b.step(k, state),
             Self::MuHigh(b) => b.step(k, state),
+        };
+        if state.assert_line != 0 {
+            s.assert = Some(("GenQTest.c", state.assert_line));
+            return Step::Finish(false);
         }
+        step
     }
 }
 
@@ -827,6 +837,10 @@ impl MuLow {
                 if k.mutex_holder_from_isr(s.mutex) != Ok(TaskHandle::NULL) {
                     s.error = true;
                 }
+                // configASSERT( xErrorDetected == pdFALSE );  (GenQTest.c:564)
+                if s.error {
+                    s.assert_line = 564;
+                }
                 self.pc = 58;
             }
             // if( xSemaphoreTake( xMutex, intsemNO_BLOCK ) != pdPASS ) { error }
@@ -930,8 +944,13 @@ impl MuLow {
                 let _ = k.semaphore_give(s.mutex);
                 self.pc = 71;
             }
+            // configASSERT( xErrorDetected == pdFALSE );  (GenQTest.c:642)
             // uxLoopCount++; — and back to the top of the task's loop.
             _ => {
+                if s.error {
+                    s.assert_line = 642;
+                    return Step::Continue;
+                }
                 s.timeout_loops = s.timeout_loops.wrapping_add(1);
                 self.pc = 1;
             }

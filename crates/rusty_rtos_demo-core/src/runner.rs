@@ -29,12 +29,30 @@ use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
 
-use rusty_rtos_core::config::{Config, PosixDemoConfig};
+use rusty_rtos_core::config::Config;
+#[cfg(not(feature = "smp"))]
+use rusty_rtos_core::config::PosixDemoConfig;
 use rusty_rtos_core::error::Result;
 use rusty_rtos_core::handle::{QueueHandle, TaskHandle};
 use rusty_rtos_core::hooks::TickHook;
 use rusty_rtos_kernel::{Kernel, list_slots_for, lists_for};
+#[cfg(not(feature = "smp"))]
 use rusty_rtos_port::SimPort;
+
+/// The configuration the corpus runs: the `Posix_GCC` demo's, on one core or
+/// (with `smp`) on two.
+#[cfg(not(feature = "smp"))]
+pub type DemoConfig = PosixDemoConfig;
+/// The configuration the corpus runs: the `Posix_GCC` demo's, on one core or
+/// (with `smp`) on two.
+#[cfg(feature = "smp")]
+pub type DemoConfig = crate::smp::PosixDemoSmpConfig;
+/// The port the corpus runs on.
+#[cfg(not(feature = "smp"))]
+pub type DemoPort = SimPort;
+/// The port the corpus runs on.
+#[cfg(feature = "smp")]
+pub type DemoPort = crate::smp::SmpPort;
 
 use crate::trace::LineTrace;
 use crate::{
@@ -72,8 +90,8 @@ pub const GROUPS: usize = 4;
 /// (the one the oracle runs), the deterministic sim port, and a sink that
 /// writes the contract's lines.
 pub type SimKernel<W> = Kernel<
-    PosixDemoConfig,
-    SimPort,
+    DemoConfig,
+    DemoPort,
     LineTrace<W>,
     TickIsr,
     TASKS,
@@ -81,17 +99,17 @@ pub type SimKernel<W> = Kernel<
         list_slots_for(
             TASKS,
             TIMERS,
-            lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS),
+            lists_for(<DemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS),
         )
     },
-    { lists_for(<PosixDemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS) },
+    { lists_for(<DemoConfig as Config>::MAX_PRIORITIES, QUEUES, GROUPS) },
     QUEUES,
     SLOTS,
     BUFFERS,
     BYTES,
     TIMERS,
     GROUPS,
-    { <PosixDemoConfig as Config>::TIMER_QUEUE_LENGTH },
+    { <DemoConfig as Config>::TIMER_QUEUE_LENGTH },
 >;
 
 /// `vApplicationTickHook`: the interrupt half of whichever scenario is
@@ -222,7 +240,7 @@ pub enum Spawn {
 
 impl Spawn {
     /// The body to put in the runner's table.
-    fn into_body<'a>(self) -> Body<'a> {
+    pub(crate) fn into_body<'a>(self) -> Body<'a> {
         match self {
             Self::Death(b) => Body::Death(b),
             Self::StreamBuffer(b) => Body::StreamBuffer(b),
@@ -328,6 +346,9 @@ pub struct Shared {
     /// the request here and [`Runner::step_once`] drains it the moment the
     /// step returns, which is before any other task can run.
     pub spawn: Option<(TaskHandle, Spawn)>,
+    /// A `configASSERT` in the demo's own C that failed: the C harness ends
+    /// the run there with `fail assert <file>:<line>`, and so does this one.
+    pub assert: Option<(&'static str, u32)>,
 }
 
 impl Default for Shared {
@@ -337,6 +358,7 @@ impl Default for Shared {
             timer_queue: QueueHandle::NULL,
             state: State::None,
             spawn: None,
+            assert: None,
         }
     }
 }
@@ -435,6 +457,9 @@ pub enum Body<'a> {
     Empty,
     /// `prvIdleTask`.
     Idle(Idle),
+    /// The two idle tasks of a two-core run.
+    #[cfg(feature = "smp")]
+    IdleSmp(crate::smp::IdleSmp),
     /// `prvTimerTask` with no timers registered.
     Timer(Timer),
     /// The harness's check task.
@@ -575,6 +600,8 @@ impl Body<'_> {
             Self::QueueSet(b) => b.step(k, s),
             Self::ApiSweep(b) => b.step(k, s),
             Self::Idle(b) => b.step(k),
+            #[cfg(feature = "smp")]
+            Self::IdleSmp(b) => b.step(k),
             Self::Timer(b) => b.step(k, s),
             Self::Check(b) => b.step(k, s),
             Self::Dynamic(b) => b.step(k, s),
@@ -647,6 +674,8 @@ pub struct Timer {
     list_was_empty: bool,
     /// `xTimeNow`.
     now: u64,
+    /// What the blocking arm's `xTaskResumeAll` answered.
+    resumed_yielded: bool,
 }
 
 impl Timer {
@@ -699,8 +728,17 @@ impl Timer {
                 self.pc = 8;
             }
             // The other arm: block on the queue until the head is due.
+            // `if( xTaskResumeAll() == pdFALSE ) { taskYIELD_WITHIN_API(); }`
+            // is TWO steps: the resume leaves a critical section, and on two
+            // cores a turn ends as such a call returns (`crate::smp`), so the
+            // yield after it belongs to the daemon's next turn. On one core
+            // the split changes nothing: no tick lands between them.
             6 => {
-                if !k.resume_all() {
+                self.resumed_yielded = k.resume_all();
+                self.pc = 9;
+            }
+            9 => {
+                if !self.resumed_yielded {
                     k.task_yield();
                 }
                 self.pc = 8;
@@ -789,13 +827,13 @@ pub struct Verdict {
 
 /// The runner: a kernel, one body per task, and the scenario's statics.
 pub struct Runner<'a, W: fmt::Write> {
-    kernel: &'a RefCell<SimKernel<W>>,
-    bodies: [Body<'a>; TASKS],
+    pub(crate) kernel: &'a RefCell<SimKernel<W>>,
+    pub(crate) bodies: [Body<'a>; TASKS],
     /// Borrowed for the same reason the kernel is: an `async` body reaches
     /// the scenario's statics, and cannot reach a field of the struct that
     /// polls it. `PollQ`'s counters are the case that forces it — the
     /// tasks write them and the check task reads them.
-    shared: &'a RefCell<Shared>,
+    pub(crate) shared: &'a RefCell<Shared>,
 }
 
 impl<'a, W: fmt::Write> Runner<'a, W> {
@@ -817,7 +855,7 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
     /// # Errors
     /// As [`Kernel::new`].
     pub fn kernel_with_sink(sink: LineTrace<W>) -> Result<RefCell<SimKernel<W>>> {
-        Ok(RefCell::new(Kernel::new(SimPort::new(), sink)?))
+        Ok(RefCell::new(Kernel::new(DemoPort::new(), sink)?))
     }
 
     /// A runner over a kernel and a set of statics the caller is holding.
@@ -882,7 +920,16 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
             shared.timer_queue = started.timer_queue;
         }
         self.attach(check, Body::Check(Check::default()));
+        #[cfg(not(feature = "smp"))]
         self.attach(started.idle, Body::Idle(Idle::default()));
+        #[cfg(feature = "smp")]
+        {
+            self.attach(started.idle, Body::IdleSmp(crate::smp::IdleSmp::new(true)));
+            self.attach(
+                started.passive_idle,
+                Body::IdleSmp(crate::smp::IdleSmp::new(false)),
+            );
+        }
         self.attach(started.timer, Body::Timer(Timer::default()));
         Ok(())
     }
@@ -975,6 +1022,14 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
     /// The limit is the runaway guard the first oracle run taught us to
     /// want: an 8 GB trace is not a diagnosis.
     pub fn run(&mut self, step_limit: u64) -> Verdict {
+        #[cfg(feature = "smp")]
+        return self.run_smp(step_limit);
+        #[cfg(not(feature = "smp"))]
+        self.run_one_core(step_limit)
+    }
+
+    #[cfg(not(feature = "smp"))]
+    fn run_one_core(&mut self, step_limit: u64) -> Verdict {
         let steps: u64;
         let mut pass = false;
         let mut runaway = false;
@@ -1059,6 +1114,12 @@ impl<'a, W: fmt::Write> Runner<'a, W> {
     /// # Errors
     /// Propagates a write failure from the sink.
     pub fn finish(&mut self, scenario: &str, verdict: &Verdict) -> fmt::Result {
+        if let Some((file, line)) = self.shared.borrow().assert {
+            return writeln!(
+                self.kernel.borrow_mut().trace_mut().writer_mut(),
+                "KAIROS_RESULT {scenario} fail assert {file}:{line}"
+            );
+        }
         let outcome = if verdict.pass { "pass" } else { "fail" };
         let Verdict {
             ticks,

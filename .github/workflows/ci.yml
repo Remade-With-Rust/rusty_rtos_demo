@@ -31,6 +31,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The two-core corpus: nine scenarios against FreeRTOS on two cores.
+      - run: cargo clippy -p rusty_rtos_demo-core --all-targets --features smp -- -D warnings
+      - run: cargo test --release -p rusty_rtos_demo-core --features smp --test smp_conformance
 
   deny:
     name: cargo deny

@@ -16,6 +16,8 @@ categories = ["embedded", "no-std", "os"]
 [features]
 default = ["std"]
 std = ["rusty_rtos_demo-core/std"]
+# The two-core corpus (rusty_rtos_demo-core/src/smp.rs).
+smp = ["rusty_rtos_demo-core/smp"]
 alloc = ["rusty_rtos_demo-core/alloc"]
 
 [[bin]]

@@ -80,6 +80,8 @@ pub mod recmutex;
 pub mod runner;
 pub mod sbint;
 pub mod semtest;
+#[cfg(feature = "smp")]
+pub mod smp;
 pub mod streambuffer;
 pub mod tasknotify;
 pub mod timerdemo;

@@ -28,6 +28,12 @@ pub const DONT_BLOCK: u64 = 0;
 /// The priority `oracle/harness/main.c` starts this scenario at.
 pub const PRIORITY: u8 = 2;
 
+/// `blckqSHORT_DELAY`: on more than one core, a polling task sleeps this
+/// long after each item (`BlockQ.c`, `configNUMBER_OF_CORES > 1`), because
+/// on two cores its partner is not guaranteed to run while it spins.
+#[cfg(feature = "smp")]
+pub const SHORT_DELAY: u64 = 5;
+
 /// Which check variable a task bumps. The C hands each task a pointer;
 /// here it is an array and an index, and the pairing is deliberately the
 /// C's own — `QConsB3` bumps a *producer* counter, because that is what
@@ -142,8 +148,20 @@ impl Producer {
                 self.pc = 2;
             }
             // ++usValue;
-            _ => {
+            2 => {
                 self.value = self.value.wrapping_add(1);
+                self.pc = if cfg!(feature = "smp") && self.block_time == 0 {
+                    3
+                } else {
+                    0
+                };
+            }
+            // #if ( configNUMBER_OF_CORES > 1 ): if( xBlockTime == 0 ) vTaskDelay( blckqSHORT_DELAY );
+            _ => {
+                #[cfg(feature = "smp")]
+                {
+                    let _ = k.delay(SHORT_DELAY);
+                }
                 self.pc = 0;
             }
         }
@@ -180,7 +198,7 @@ impl Consumer {
             },
             // if( usData != usExpectedValue ) { usExpectedValue = usData; sError = pdTRUE; }
             // else { if( !sError ) { ( *psCheckVariable )++; } ++usExpectedValue; }
-            _ => {
+            1 => {
                 if self.data == self.expected {
                     if !self.error {
                         s.bump(self.slot);
@@ -189,6 +207,18 @@ impl Consumer {
                 } else {
                     self.expected = self.data;
                     self.error = true;
+                }
+                self.pc = if cfg!(feature = "smp") && self.block_time == 0 {
+                    2
+                } else {
+                    0
+                };
+            }
+            // #if ( configNUMBER_OF_CORES > 1 ): if( xBlockTime == 0 ) vTaskDelay( blckqSHORT_DELAY );
+            _ => {
+                #[cfg(feature = "smp")]
+                {
+                    let _ = k.delay(SHORT_DELAY);
                 }
                 self.pc = 0;
             }

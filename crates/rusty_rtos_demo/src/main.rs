@@ -139,6 +139,10 @@ fn usage() -> ExitCode {
 }
 
 fn main() -> ExitCode {
+    #[cfg(feature = "smp")]
+    if env::var_os("KAIROS_SMP_DEBUG").is_some() {
+        rusty_rtos_demo_core::smp::DEBUG_TURNS.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(name) = args.first() else {
         return usage();

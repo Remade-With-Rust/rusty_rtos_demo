@@ -19,6 +19,9 @@ default = ["std"]
 # the crate is pure `core` and still builds on Cortex-M and RISC-V bare metal.
 std = ["alloc", "rusty_rtos_core/std", "rusty_rtos_kernel/std", "rusty_rtos_port/std"]
 alloc = ["rusty_rtos_core/alloc", "rusty_rtos_kernel/alloc", "rusty_rtos_port/alloc"]
+# The two-core corpus: the same bodies on a two-core kernel under the
+# two-core sim contract (src/smp.rs, oracle/harness-smp).
+smp = []
 
 [dependencies]
 rusty_rtos_core = { workspace = true }

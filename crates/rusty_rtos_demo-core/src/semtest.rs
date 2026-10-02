@@ -148,6 +148,11 @@ impl Body {
             }
             // if( xSemaphoreGive( xSemaphore ) == pdFALSE ) { sError = pdTRUE; }
             4 => self.give(k),
+            // else { if( xBlockTime == 0 ) taskYIELD(); }  -- after a failed poll
+            7 => {
+                k.task_yield();
+                self.pc = 1;
+            }
             // if( sError == pdFALSE ) { sCheckVariables[ sCheckVariableToUse ]++; }
             5 => {
                 if !self.error && self.check_slot < NUM_TASKS {
@@ -184,10 +189,13 @@ impl Body {
             Ok(Wait::Ready(())) => self.pc = 2,
             Ok(Wait::Blocked) => {}
             // The take timed out. A polling task yields; a blocking one
-            // simply tries again.
+            // simply tries again. The yield is its own step: the take left a
+            // critical section, and on two cores a turn ends as such a call
+            // returns (`crate::smp`), so the C's `taskYIELD()` after it runs
+            // in the task's next turn. On one core the split changes nothing.
             Err(_) => {
                 if self.block_time == 0 {
-                    k.task_yield();
+                    self.pc = 7;
                 }
             }
         }

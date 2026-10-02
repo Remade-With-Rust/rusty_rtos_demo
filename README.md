@@ -75,6 +75,29 @@ Offline, all of it is pinned by counters, line count, byte count and an
 FNV-1a/64 digest of the C kernel's own trace file, so a regression is caught
 without the oracle present.
 
+### On two cores
+
+With `--features smp` the same bodies run on a two-core kernel, against
+FreeRTOS V11.3.1 built with `configNUMBER_OF_CORES 2` on a deterministic
+two-core port (the umbrella's `oracle/harness-smp`): **nine scenarios
+identical at 20,000 ticks** -- `semtest`, `dynamic`, `PollQ`, `BlockQ`,
+`countsem`, `recmutex`, `blocktim`, `QPeek` and `GenQTest`, about 900,000
+lines.
+
+```sh
+cargo test --release -p rusty_rtos_demo-core --features smp --test smp_conformance
+```
+
+The two sides share one rule for interleaving the cores (`src/smp.rs`): each
+core takes a TURN; a turn ends when a kernel call that left a critical
+section returns, when the core switches task, or after an idle pass; a core
+whose partner holds the scheduler suspended is skipped; ticks land on core 0
+between turns. Four scenarios fail their own checks on two cores -- they
+measure single-core timing (`blocktim`, `QPeek`) or assert single-core
+exclusion in the demo's own code (`recmutex`, `GenQTest`) -- and Kairos fails
+them identically, at the same line. Building this corpus found one kernel
+defect (the SMP arms of priority inheritance, fixed in kernel 0.3.1).
+
 ## Using it
 
 ```sh
