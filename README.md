@@ -112,6 +112,11 @@ No rows of its own: this package measures agreement, not speed. The timing
 rows belong to [`rusty_rtos_kernel`](https://crates.io/crates/rusty_rtos_kernel)
 and [`rusty_rtos_port`](https://crates.io/crates/rusty_rtos_port).
 
+The two-core corpus above is also the instrument the kernel's two-core cost is
+measured on: with kernel 0.3.2 the kernel's own instructions on `semtest`,
+`BlockQ` and `recmutex` fell 24%, 20% and 25%, with every trace here still
+identical to FreeRTOS. The table is in the kernel's README.
+
 ## Portability
 
 | target | corpus |
