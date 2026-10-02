@@ -26,18 +26,18 @@ dependencies = [
 
 [[package]]
 name = "rusty_rtos_kernel"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54462de5320737c36c6ae2bd2c9821b01622f39d580b6eaed18109e95d8505aa"
+checksum = "7030c83dd466207bafd3c9ea47a530b8bb3bb8573514b1178deed978a29471f8"
 dependencies = [
  "rusty_rtos_kernel-core",
 ]
 
 [[package]]
 name = "rusty_rtos_kernel-core"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6841e9d94dee3c638e72da43983e126e6ccc6af246aa9e33197398b9923264a"
+checksum = "13aead9f21b6e8aeb692ec549548a456217dc9771681afaf1611a644326743fc"
 dependencies = [
  "rusty_rtos_core",
 ]
