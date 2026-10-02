@@ -20,10 +20,23 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test which_resource_leaks -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
+/// One create/delete pair: its name, and the body that runs it once.
+type Case = (
+    &'static str,
+    fn(&mut rusty_rtos_demo_core::runner::SimKernel<Digest>),
+);
 
-use rusty_rtos_demo_core::pins::Digest;
 use rusty_rtos_demo_core::Runner;
+use rusty_rtos_demo_core::pins::Digest;
 
 /// How many create/delete rounds per pair. Larger than the capacity, so a
 /// leak of even one slot per round is unmissable.
@@ -43,7 +56,10 @@ fn free_capacity(k: &mut rusty_rtos_demo_core::runner::SimKernel<Digest>) -> usi
 }
 
 /// Baseline capacity, and capacity after `rounds` of the given pair.
-fn capacity_after(rounds: usize, mut pair: impl FnMut(&mut rusty_rtos_demo_core::runner::SimKernel<Digest>)) -> (usize, usize) {
+fn capacity_after(
+    rounds: usize,
+    mut pair: impl FnMut(&mut rusty_rtos_demo_core::runner::SimKernel<Digest>),
+) -> (usize, usize) {
     let baseline = {
         let kernel = Runner::kernel_for(Digest::new()).expect("the sim geometry holds");
         let mut k = kernel.borrow_mut();
@@ -68,11 +84,14 @@ fn which_create_delete_pair_does_not_reclaim() {
     println!();
     println!("=== capacity after {ROUNDS} create/delete rounds, one pair at a time ===");
     println!();
-    println!("{:<26}  {:>8}  {:>8}  {:>7}", "pair", "before", "after", "lost");
+    println!(
+        "{:<26}  {:>8}  {:>8}  {:>7}",
+        "pair", "before", "after", "lost"
+    );
 
     let mut leakers = Vec::new();
 
-    let cases: [(&str, fn(&mut rusty_rtos_demo_core::runner::SimKernel<Digest>)); 4] = [
+    let cases: [Case; 4] = [
         ("queue / queue_delete", |k| {
             if let Ok(q) = k.queue_create(1) {
                 let _ = k.queue_delete(q);

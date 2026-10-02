@@ -24,12 +24,20 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test queue_slot_leak -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
 use core::cell::RefCell;
 
-use rusty_rtos_demo_core::pins::{pins, Digest};
+use rusty_rtos_demo_core::pins::{Digest, pins};
 use rusty_rtos_demo_core::runner::Shared;
-use rusty_rtos_demo_core::{step_limit_for, Runner};
+use rusty_rtos_demo_core::{Runner, step_limit_for};
 
 /// Lengths to sample. The last two straddle the failure at 220,387.
 const LENGTHS: [u64; 10] = [
@@ -88,7 +96,10 @@ fn queue_slots_are_reclaimed_or_they_are_not() {
     // earlier version compared first against last and called anything
     // falling a leak; this data is flat for ~400 cycles and then collapses,
     // which that test would have described as a steady leak.
-    let zero_at = readings.iter().find(|(_, free)| *free == 0).map(|(t, _)| *t);
+    let zero_at = readings
+        .iter()
+        .find(|(_, free)| *free == 0)
+        .map(|(t, _)| *t);
     if last < first {
         println!("FALLING: {first} -> {last}, on a scenario that deletes every");
         println!("queue it creates. Capacity is not being fully reclaimed.");

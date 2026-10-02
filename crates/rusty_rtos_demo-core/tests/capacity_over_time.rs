@@ -26,12 +26,20 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test capacity_over_time -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
 use core::cell::RefCell;
 
-use rusty_rtos_demo_core::pins::{pins, Digest};
-use rusty_rtos_demo_core::runner::{Shared, SimKernel, State, Step};
 use rusty_rtos_demo_core::Runner;
+use rusty_rtos_demo_core::pins::{Digest, pins};
+use rusty_rtos_demo_core::runner::{Shared, SimKernel, State, Step};
 
 /// Sample this often, in ticks.
 const EVERY: u64 = 2_000;
@@ -72,7 +80,10 @@ fn when_is_each_slot_lost() {
     println!();
     println!("=== free capacity as AbortDelay runs (sampled every {EVERY} ticks) ===");
     println!();
-    println!("{:>9}  {:>9}  {:>6}  {:>8}", "tick", "capacity", "drop", "passes");
+    println!(
+        "{:>9}  {:>9}  {:>6}  {:>8}",
+        "tick", "capacity", "drop", "passes"
+    );
 
     let mut last = usize::MAX;
     let mut next_sample = 0u64;

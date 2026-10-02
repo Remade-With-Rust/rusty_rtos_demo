@@ -27,10 +27,18 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test delete_with_waiter -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
+use rusty_rtos_demo_core::Runner;
 use rusty_rtos_demo_core::pins::Digest;
 use rusty_rtos_demo_core::runner::SimKernel;
-use rusty_rtos_demo_core::Runner;
 
 /// Rounds per shape. Three times the arena, so one slot lost per round is
 /// unmissable and a rarer loss still shows.
@@ -53,7 +61,8 @@ fn kernel_with_a_task() -> core::cell::RefCell<SimKernel<Digest>> {
     let kernel = Runner::kernel_for(Digest::new()).expect("the sim geometry holds");
     {
         let mut k = kernel.borrow_mut();
-        k.create_task("waiter", 2).expect("the task arena holds one");
+        k.create_task("waiter", 2)
+            .expect("the task arena holds one");
         k.start_scheduler().expect("the scheduler starts");
     }
     kernel
@@ -61,7 +70,10 @@ fn kernel_with_a_task() -> core::cell::RefCell<SimKernel<Digest>> {
 
 /// `rounds` of: create a queue, block the current task on it, do `after`,
 /// then delete. Returns capacity before and after.
-fn capacity_after(rounds: usize, mut after_block: impl FnMut(&mut SimKernel<Digest>)) -> (usize, usize) {
+fn capacity_after(
+    rounds: usize,
+    mut after_block: impl FnMut(&mut SimKernel<Digest>),
+) -> (usize, usize) {
     let before = {
         let kernel = kernel_with_a_task();
         let mut k = kernel.borrow_mut();
@@ -124,18 +136,29 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
     println!();
     println!("=== capacity after {ROUNDS} rounds, with a task blocked on the queue ===");
     println!();
-    println!("{:<34}  {:>7}  {:>7}  {:>6}", "shape", "before", "after", "lost");
+    println!(
+        "{:<34}  {:>7}  {:>7}  {:>6}",
+        "shape", "before", "after", "lost"
+    );
 
     // 1. block, then delete.
     let (b1, a1) = capacity_after(ROUNDS, |_| {});
-    println!("{:<34}  {b1:>7}  {a1:>7}  {:>6}", "block -> delete", b1.saturating_sub(a1));
+    println!(
+        "{:<34}  {b1:>7}  {a1:>7}  {:>6}",
+        "block -> delete",
+        b1.saturating_sub(a1)
+    );
 
     // 2. block, abort the block, then delete.
     let (b2, a2) = capacity_after(ROUNDS, |k| {
         let current = k.current();
         let _ = k.abort_delay(current);
     });
-    println!("{:<34}  {b2:>7}  {a2:>7}  {:>6}", "block -> abort -> delete", b2.saturating_sub(a2));
+    println!(
+        "{:<34}  {b2:>7}  {a2:>7}  {:>6}",
+        "block -> abort -> delete",
+        b2.saturating_sub(a2)
+    );
 
     // 3. the control: block, let the wait elapse, then delete.
     let (b3, a3) = capacity_after(ROUNDS, |k| {
@@ -143,7 +166,11 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
             let _ = k.increment_tick();
         }
     });
-    println!("{:<34}  {b3:>7}  {a3:>7}  {:>6}", "block -> time out -> delete", b3.saturating_sub(a3));
+    println!(
+        "{:<34}  {b3:>7}  {a3:>7}  {:>6}",
+        "block -> time out -> delete",
+        b3.saturating_sub(a3)
+    );
 
     // ---- the other three surfaces ----
     //
@@ -161,7 +188,13 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
             let _ = k.queue_delete(h);
         },
     );
-    println!("{:<34}  {:>7}  {:>7}  {:>6}", "semaphore: block -> abort -> del", sem.0, sem.1, sem.0.saturating_sub(sem.1));
+    println!(
+        "{:<34}  {:>7}  {:>7}  {:>6}",
+        "semaphore: block -> abort -> del",
+        sem.0,
+        sem.1,
+        sem.0.saturating_sub(sem.1)
+    );
 
     let grp = surface_with_waiter(
         "event group",
@@ -173,7 +206,13 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
             let _ = k.event_group_delete(h);
         },
     );
-    println!("{:<34}  {:>7}  {:>7}  {:>6}", "event group: block -> abort -> del", grp.0, grp.1, grp.0.saturating_sub(grp.1));
+    println!(
+        "{:<34}  {:>7}  {:>7}  {:>6}",
+        "event group: block -> abort -> del",
+        grp.0,
+        grp.1,
+        grp.0.saturating_sub(grp.1)
+    );
 
     let stream = surface_with_waiter(
         "stream buffer",
@@ -186,7 +225,13 @@ fn deleting_an_object_with_a_waiter_reclaims_or_does_not() {
             let _ = k.stream_buffer_delete(h);
         },
     );
-    println!("{:<34}  {:>7}  {:>7}  {:>6}", "stream buffer: block -> abort -> del", stream.0, stream.1, stream.0.saturating_sub(stream.1));
+    println!(
+        "{:<34}  {:>7}  {:>7}  {:>6}",
+        "stream buffer: block -> abort -> del",
+        stream.0,
+        stream.1,
+        stream.0.saturating_sub(stream.1)
+    );
 
     println!();
     let lost = [

@@ -27,10 +27,18 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test batch_vs_single -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
+use rusty_rtos_demo_core::Runner;
 use rusty_rtos_demo_core::pins::Digest;
 use rusty_rtos_demo_core::runner::SimKernel;
-use rusty_rtos_demo_core::Runner;
 
 /// How many batches, or equivalent singles.
 const ROUNDS: usize = 10;
@@ -38,7 +46,6 @@ const ROUNDS: usize = 10;
 fn fresh() -> core::cell::RefCell<SimKernel<Digest>> {
     Runner::kernel_for(Digest::new()).expect("the sim geometry holds")
 }
-
 
 /// Capacity of an untouched kernel, and of one that has seen `ROUNDS` of
 /// the shape.
@@ -78,7 +85,10 @@ fn does_holding_several_at_once_lose_a_slot() {
     println!();
     println!("=== {ROUNDS} rounds of each shape ===");
     println!();
-    println!("{:<34}  {:>7}  {:>7}  {:>6}", "shape", "before", "after", "lost");
+    println!(
+        "{:<34}  {:>7}  {:>7}  {:>6}",
+        "shape", "before", "after", "lost"
+    );
 
     // 1. one at a time, ten times the batch size so the totals are fair.
     let (b1, a1) = run(|k| {
@@ -88,7 +98,11 @@ fn does_holding_several_at_once_lose_a_slot() {
             }
         }
     });
-    println!("{:<34}  {b1:>7}  {a1:>7}  {:>6}", "single: create 1, delete 1", b1.saturating_sub(a1));
+    println!(
+        "{:<34}  {b1:>7}  {a1:>7}  {:>6}",
+        "single: create 1, delete 1",
+        b1.saturating_sub(a1)
+    );
 
     // 2. fill, then drain oldest-first.
     let (b2, a2) = run(|k| {
@@ -103,7 +117,11 @@ fn does_holding_several_at_once_lose_a_slot() {
             let _ = k.queue_delete(q);
         }
     });
-    println!("{:<34}  {b2:>7}  {a2:>7}  {:>6}", "batch: fill, drain oldest-first", b2.saturating_sub(a2));
+    println!(
+        "{:<34}  {b2:>7}  {a2:>7}  {:>6}",
+        "batch: fill, drain oldest-first",
+        b2.saturating_sub(a2)
+    );
 
     // 3. fill, then drain newest-first.
     let (b3, a3) = run(|k| {
@@ -118,7 +136,11 @@ fn does_holding_several_at_once_lose_a_slot() {
             let _ = k.queue_delete(q);
         }
     });
-    println!("{:<34}  {b3:>7}  {a3:>7}  {:>6}", "batch: fill, drain newest-first", b3.saturating_sub(a3));
+    println!(
+        "{:<34}  {b3:>7}  {a3:>7}  {:>6}",
+        "batch: fill, drain newest-first",
+        b3.saturating_sub(a3)
+    );
 
     // 4. the fragmenting shape: create three, delete the MIDDLE one.
     //
@@ -138,7 +160,11 @@ fn does_holding_several_at_once_lose_a_slot() {
             let _ = k.queue_delete(held[2]);
         }
     });
-    println!("{:<34}  {b4:>7}  {a4:>7}  {:>6}", "fragmenting: delete middle first", b4.saturating_sub(a4));
+    println!(
+        "{:<34}  {b4:>7}  {a4:>7}  {:>6}",
+        "fragmenting: delete middle first",
+        b4.saturating_sub(a4)
+    );
 
     println!();
     let single = b1.saturating_sub(a1);
@@ -162,9 +188,6 @@ fn does_holding_several_at_once_lose_a_slot() {
         println!("That is a kernel defect and it is nothing to do with which");
         println!("object or which surface -- which is why eight hypotheses that");
         println!("each held at most ONE object missed it.");
-    } else if single == 0 && oldest == 0 && newest == 0 {
-        println!("All three hold. The acceleration the sampler caused is not");
-        println!("explained by batching, and the ninth hypothesis dies too.");
     } else {
         println!("single lost {single}, which the earlier probe said it does not.");
         println!("Settle that contradiction before reading the batch rows.");

@@ -33,12 +33,20 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test abortdelay_hour -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
 use core::cell::RefCell;
 
-use rusty_rtos_demo_core::pins::{pins, Digest};
+use rusty_rtos_demo_core::pins::{Digest, pins};
 use rusty_rtos_demo_core::runner::{Shared, State};
-use rusty_rtos_demo_core::{step_limit_for, Runner};
+use rusty_rtos_demo_core::{Runner, step_limit_for};
 
 /// Either side of the bisected boundary, and one far past it.
 const LENGTHS: [u64; 3] = [220_000, 221_000, 3_600_000];
@@ -134,7 +142,9 @@ fn which_condition_fails_abort_delay() {
             } else {
                 "too long -- an overrun past the margin"
             };
-            println!("            first margin failure: expected {expected}, blocked {blocked}, pc {pc} -- {direction}");
+            println!(
+                "            first margin failure: expected {expected}, blocked {blocked}, pc {pc} -- {direction}"
+            );
         }
     }
 
@@ -172,7 +182,10 @@ fn which_condition_fails_abort_delay() {
     if let Some(o) = outcome {
         println!("  the send at pc 72 came back: {o}");
     }
-    println!("  queue_create was refused during the run: {}", run_for(hi).7);
+    println!(
+        "  queue_create was refused during the run: {}",
+        run_for(hi).7
+    );
     println!(
         "  the one-deep queue holds {} message(s) at that length",
         queued.map_or_else(|| "?".to_owned(), |q| q.to_string())

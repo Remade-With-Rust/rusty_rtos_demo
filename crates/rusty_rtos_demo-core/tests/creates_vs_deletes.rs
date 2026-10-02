@@ -16,12 +16,20 @@
 //! ```sh
 //! cargo test -p rusty_rtos_demo-core --test creates_vs_deletes -- --ignored --nocapture
 //! ```
+#![allow(
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "a diagnostic test: it asserts by panicking and indexes and counts small bounded tables"
+)]
 
 use core::cell::RefCell;
 
-use rusty_rtos_demo_core::pins::{pins, Digest};
+use rusty_rtos_demo_core::pins::{Digest, pins};
 use rusty_rtos_demo_core::runner::{Shared, State};
-use rusty_rtos_demo_core::{step_limit_for, Runner};
+use rusty_rtos_demo_core::{Runner, step_limit_for};
 
 const LENGTHS: [u64; 6] = [1_000, 100_000, 200_000, 210_000, 219_000, 221_000];
 
@@ -31,7 +39,10 @@ fn every_created_queue_is_deleted() {
     println!();
     println!("=== AbortDelay: queues created against queues deleted ===");
     println!();
-    println!("{:>10}  {:>9}  {:>9}  {:>8}", "ticks", "created", "deleted", "unclosed");
+    println!(
+        "{:>10}  {:>9}  {:>9}  {:>8}",
+        "ticks", "created", "deleted", "unclosed"
+    );
 
     let mut worst = 0u32;
     for ticks in LENGTHS {
