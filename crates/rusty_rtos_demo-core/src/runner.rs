@@ -269,6 +269,17 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
         }
     }
 
+    /// `None` hands `self` back untouched. Saying so spares the kernel
+    /// copying this enum -- the size of its largest arm -- out and back on
+    /// every tick of a scenario with no interrupt half.
+    ///
+    /// `MessageBufferAmp` is untouched too and is NOT named: the enum's tag
+    /// is a niche, so two arms cost a decode of it on every tick of every
+    /// scenario that does have an interrupt half, and one arm is a compare.
+    fn wants_tick(&self) -> bool {
+        !matches!(self, Self::None)
+    }
+
     /// `PendedFunction_t`: what the daemon task runs on behalf of an
     /// interrupt. The two event-group deferrals are the kernel's own, so
     /// they go straight back to it.
