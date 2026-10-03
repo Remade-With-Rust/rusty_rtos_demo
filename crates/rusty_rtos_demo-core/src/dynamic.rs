@@ -237,9 +237,24 @@ impl CCtrl {
                 let _ = k.resume(s.cnt_inc);
                 self.pc = 5;
             }
-            // configASSERT( eTaskGetState( ... ) == eReady );
+            // #if ( configNUMBER_OF_CORES > 1 )
+            //     configASSERT( ( eState == eReady ) || ( eState == eRunning ) );
+            // #else
+            //     configASSERT( eTaskGetState( ... ) == eReady );
+            //
+            // The two-core arm was missing from this port, and nothing showed
+            // it: Kairos's two-core `eTaskGetState` never answered Running for
+            // a task on the OTHER core, so `== Ready` always held. Fixing the
+            // kernel (the API differential's first finding) made the port's
+            // omission visible as a failed check here.
             5 => {
-                if k.task_state_get(s.cnt_inc) != Ok(TaskState::Ready) {
+                let state = k.task_state_get(s.cnt_inc);
+                let ok = if cfg!(feature = "smp") {
+                    matches!(state, Ok(TaskState::Ready | TaskState::Running))
+                } else {
+                    state == Ok(TaskState::Ready)
+                };
+                if !ok {
                     self.error = true;
                 }
                 self.pc = 6;
