@@ -312,3 +312,143 @@ pub fn start<'a, W: fmt::Write>(
     runner.attach(producer_task, Body::Async(producer));
     Ok(())
 }
+
+/// Each call future is the one C call it names, and a step boundary
+/// (plan `api-differential.md`, P4).
+///
+/// `PollQ-async` is diffed against `PollQ`'s C trace as a whole; these pin
+/// the parts. Two kernels, started alike: on A a future is polled twice, on
+/// B the C call it claims is made directly. The first poll must leave A
+/// exactly where the direct call leaves B -- trace text, exits, nesting,
+/// yields, ticks, the running task, the scenario's counters -- and answer
+/// `Pending`; the second must answer what the direct call answered and
+/// touch nothing.
+#[cfg(all(test, feature = "std", not(feature = "smp")))]
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an equivalence test: it asserts by panicking"
+)]
+mod tests {
+    use super::*;
+    use core::fmt::Debug;
+    use core::task::{Context, Waker};
+    use std::string::String;
+
+    type K = SimKernel<String>;
+
+    fn started() -> (RefCell<K>, RefCell<Shared>, QueueHandle) {
+        let kernel = Runner::<String>::kernel_for(String::new()).expect("kernel");
+        let queue = {
+            let mut k = kernel.borrow_mut();
+            let queue = k.queue_create(QUEUE_SIZE).expect("queue");
+            let _ = k.create_task("QConsNB", PRIORITY).expect("task");
+            let _ = k.start_scheduler().expect("start");
+            queue
+        };
+        let shared = RefCell::new(Shared::default());
+        shared.borrow_mut().state = runner::State::PollQ(State {
+            queue,
+            ..State::default()
+        });
+        (kernel, shared, queue)
+    }
+
+    /// Everything a call can move.
+    fn snap(kernel: &RefCell<K>, shared: &RefCell<Shared>) -> String {
+        let mut k = kernel.borrow_mut();
+        let p = k.port();
+        let head = std::format!(
+            "cur={:?} tick={} exits={} nesting={} yields={} ticks={}",
+            k.current(),
+            k.tick_count(),
+            p.exits(),
+            p.nesting(),
+            p.yields(),
+            p.ticks()
+        );
+        let counts = match &shared.borrow().state {
+            runner::State::PollQ(s) => (s.producer_count, s.consumer_count),
+            _ => (-1, -1),
+        };
+        std::format!("{head} counts={counts:?}\n{}", k.trace_mut().writer_mut())
+    }
+
+    fn one_call<T: PartialEq + Debug>(
+        what: &str,
+        a: (&RefCell<K>, &RefCell<Shared>),
+        b: (&RefCell<K>, &RefCell<Shared>),
+        future: impl Future<Output = T>,
+        direct: impl FnOnce(&mut K, &RefCell<Shared>) -> T,
+    ) {
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut future = core::pin::pin!(future);
+        assert!(
+            future.as_mut().poll(&mut cx).is_pending(),
+            "{what}: the poll that makes the call must end the step"
+        );
+        let want = direct(&mut b.0.borrow_mut(), b.1);
+        let (sa, sb) = (snap(a.0, a.1), snap(b.0, b.1));
+        assert!(
+            sa == sb,
+            "{what}: the first poll is not the direct call\n--- future:\n{sa}\n--- direct:\n{sb}"
+        );
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(got) => assert_eq!(got, want, "{what}: answered differently"),
+            Poll::Pending => panic!("{what}: the second poll must answer"),
+        }
+        assert_eq!(
+            snap(a.0, a.1),
+            sa,
+            "{what}: the answering poll touched the kernel"
+        );
+    }
+
+    #[test]
+    fn every_call_future_is_one_direct_call_and_one_step() {
+        let (ka, sa, q) = started();
+        let (kb, sb, qb) = started();
+        assert_eq!(q, qb);
+        let (a, b) = ((&ka, &sa), (&kb, &sb));
+
+        one_call("send", a, b, send(&ka, q, 7), |k, _| {
+            matches!(k.queue_send(q, 7, NO_DELAY), Ok(Wait::Ready(())))
+        });
+        one_call("count, producer", a, b, count(&ka, &sa, true), |k, s| {
+            k.enter_critical();
+            if let runner::State::PollQ(st) = &mut s.borrow_mut().state {
+                st.producer_count = st.producer_count.wrapping_add(1);
+            }
+            k.exit_critical();
+        });
+        one_call("waiting", a, b, waiting(&ka, q), |k, _| {
+            k.queue_messages_waiting(q).unwrap_or(0)
+        });
+        one_call("receive", a, b, receive(&ka, q), |k, _| {
+            match k.queue_receive(q, NO_DELAY) {
+                Ok(Wait::Ready(v)) => Some(u16::try_from(v).unwrap_or(u16::MAX)),
+                _ => None,
+            }
+        });
+        one_call("receive, empty", a, b, receive(&ka, q), |k, _| {
+            match k.queue_receive(q, NO_DELAY) {
+                Ok(Wait::Ready(v)) => Some(u16::try_from(v).unwrap_or(u16::MAX)),
+                _ => None,
+            }
+        });
+        one_call("count, consumer", a, b, count(&ka, &sa, false), |k, s| {
+            k.enter_critical();
+            if let runner::State::PollQ(st) = &mut s.borrow_mut().state {
+                st.consumer_count = st.consumer_count.wrapping_add(1);
+            }
+            k.exit_critical();
+        });
+        one_call("delay", a, b, delay(&ka, PRODUCER_DELAY), |k, _| {
+            let _ = k.delay(PRODUCER_DELAY);
+        });
+        // Something was compared: the trace has lines and the clock moved.
+        let s = snap(&ka, &sa);
+        assert!(s.lines().count() > 5, "{s}");
+        assert!(ka.borrow().port().exits() > 5, "{s}");
+    }
+}
