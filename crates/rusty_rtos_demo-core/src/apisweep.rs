@@ -230,7 +230,15 @@ impl Body {
                     Ok(Wait::Blocked) => return Step::Continue,
                     Ok(Wait::Ready(false)) | Err(_) => Self::fail(k),
                 }
-                // Only now may the interrupt touch the queue.
+                self.pc = 12;
+            }
+            // `xSweepReady = pdTRUE`: only now may the interrupt touch the
+            // queue. Its own step, not the tail of the one above: on two
+            // cores a turn ends as the `xTimerStart` that left a critical
+            // section returns, so the C's write lands in the task's NEXT
+            // turn -- a tick later than one step would put it -- and the
+            // interrupt's period is counted from it. Free on one core.
+            12 => {
                 with_isr(k, |i| i.ready = true);
                 self.pc = 1;
             }

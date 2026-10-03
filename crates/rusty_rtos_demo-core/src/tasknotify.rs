@@ -195,6 +195,8 @@ pub struct Isr {
     /// here rather than in [`State`] for the same reason everything else
     /// in this struct does: a callback cannot reach `State`.
     test_status: bool,
+    /// The callbacks fired and not yet run, on two cores.
+    deferred: crate::runner::Deferred,
 }
 
 impl Default for Isr {
@@ -207,11 +209,18 @@ impl Default for Isr {
             api_to_use: 0,
             suspend_calls: 0,
             test_status: true,
+            deferred: crate::runner::Deferred::default(),
         }
     }
 }
 
 impl Isr {
+    /// Queue a fired callback for the daemon to run (two cores).
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) fn defer(&mut self, timer: TimerHandle, callback: u16) {
+        self.deferred.push(timer, callback);
+    }
+
     pub(crate) fn tick<W: fmt::Write>(mut self, k: &mut SimKernel<W>) -> Self {
         // The task runs its own tests before creating the timer that gives
         // the notification from here, so until that timer exists this does
@@ -261,7 +270,60 @@ fn with_isr<W: fmt::Write, R>(k: &mut SimKernel<W>, f: impl FnOnce(&mut Isr) -> 
     }
 }
 
+/// One kernel call of a deferred callback (two cores; see
+/// [`crate::runner::Deferred`]): the same calls as [`timer_callback`], in
+/// the same order, a step each. `true` when it ran a step.
+#[cfg_attr(not(feature = "smp"), allow(dead_code))]
+pub(crate) fn callback_step<W: fmt::Write>(k: &mut SimKernel<W>) -> bool {
+    let Some((_timer, callback, pc)) = with_isr(k, |isr| isr.deferred.next()) else {
+        return false;
+    };
+    let (task, calls) = with_isr(k, |isr| (isr.task, isr.suspend_calls));
+    let done = match (callback, calls != 0, pc) {
+        // prvSuspendedTaskTimerTestCallback: vTaskSuspend( xTaskToNotify ).
+        (CB_SUSPENDED_TEST, _, 0) => {
+            let _ = k.suspend(Some(task));
+            false
+        }
+        // The second call onwards: xTaskNotify( .., eSetValueWithOverwrite ).
+        (CB_SUSPENDED_TEST, true, 1) => {
+            let _ = k.notify(task, IDX, calls, NotifyAction::Overwrite);
+            false
+        }
+        // configASSERT( eTaskGetState( xTaskToNotify ) == eSuspended ).
+        (CB_SUSPENDED_TEST, false, 1) | (CB_SUSPENDED_TEST, true, 2) => {
+            if k.task_state_get(task) != Ok(TaskState::Suspended) {
+                fail(k);
+            }
+            false
+        }
+        // vTaskResume( xTaskToNotify ); ulCallCount++.
+        (CB_SUSPENDED_TEST, _, _) => {
+            let _ = k.resume(task);
+            with_isr(k, |isr| {
+                isr.suspend_calls = isr.suspend_calls.wrapping_add(1)
+            });
+            true
+        }
+        // prvNotifyingTimer: xTaskNotifyGive( xTaskToNotify ).
+        (_, _, 0) => {
+            let _ = k.notify(task, IDX, 0, NotifyAction::Increment);
+            false
+        }
+        // ... then ulTimerNotificationsSent++ in a critical section.
+        _ => {
+            k.enter_critical();
+            with_isr(k, |isr| isr.sent = isr.sent.wrapping_add(1));
+            k.exit_critical();
+            true
+        }
+    };
+    with_isr(k, |isr| isr.deferred.stepped(done));
+    true
+}
+
 /// The two timer callbacks, dispatched from [`crate::runner::TickIsr`].
+#[cfg_attr(feature = "smp", allow(dead_code))]
 pub(crate) fn timer_callback<W: fmt::Write>(k: &mut SimKernel<W>, callback: u16) {
     match callback {
         // prvSuspendedTaskTimerTestCallback: the first call suspends and
@@ -325,6 +387,8 @@ pub struct Body {
     time_on_entering: u64,
     /// `xSingleTaskTimer`.
     single_task_timer: TimerHandle,
+    /// The `Notifier` timer between its create and its publication.
+    notifier: TimerHandle,
     /// `xPeriod`, which the main loop computes once and then uses twice.
     period: u64,
 }
@@ -816,11 +880,23 @@ impl Body {
             // xTimer = xTimerCreate( "Notifier", xMaxPeriod, pdFALSE, NULL, prvNotifyingTimer );
             // Publishing it to the interrupt half is what lets the tick start
             // notifying: `xNotifyTaskFromISR` does nothing until it is set.
-            55 => {
-                match k.timer_create("Notifier", u64::from(MAX_PERIOD), false, 0, CB_NOTIFYING) {
-                    Ok(t) => with_isr(k, |isr| isr.timer = t),
-                    Err(_) => s.error_status = false,
+            55 => match k.timer_create("Notifier", u64::from(MAX_PERIOD), false, 0, CB_NOTIFYING) {
+                Ok(t) => {
+                    self.notifier = t;
+                    self.pc = 56;
                 }
+                Err(_) => {
+                    s.error_status = false;
+                    self.pc = LOOP_BASE;
+                }
+            },
+            // `xTimer = ...`: the assignment, a step of its own. On two cores
+            // a turn ends as the create returns, so the C publishes the
+            // handle in the task's NEXT turn, and the interrupt counts its
+            // period from then. Free on one core.
+            56 => {
+                let t = self.notifier;
+                with_isr(k, |isr| isr.timer = t);
                 self.pc = LOOP_BASE;
             }
             // ---- the main loop ----

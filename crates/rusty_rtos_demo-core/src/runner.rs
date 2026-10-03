@@ -160,6 +160,76 @@ pub enum TickIsr {
     MessageBufferAmp(mbamp::Isr),
 }
 
+/// Timer callbacks the daemon has fired and not yet run, on two cores.
+///
+/// One core runs a callback where the kernel fires it, inside the daemon's
+/// call. Two cannot: every kernel call a callback makes is a top-level call
+/// that leaves a critical section, so the C daemon's TURN ends at each one
+/// (the contract, rule 2) and the other core runs in between --
+/// `prvSuspendedTaskTimerTestCallback` suspends, asserts on a state and
+/// resumes across three turns. A stackless daemon cannot stop inside the
+/// kernel's call, so on two cores the hook queues the callback here and the
+/// daemon runs it next, one kernel call a step ([`Timer`]), before anything
+/// else it does: the order the C runs them in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Deferred {
+    /// Fired, not started, oldest first.
+    queue: [(rusty_rtos_core::handle::TimerHandle, u16); 4],
+    len: u8,
+    /// The callback running, and how far it has got.
+    pub(crate) current: Option<(rusty_rtos_core::handle::TimerHandle, u16)>,
+    pub(crate) pc: u8,
+}
+
+impl Deferred {
+    /// Queue a fired callback. More than four outstanding at once would be
+    /// a daemon firing faster than it runs callbacks, which the corpus never
+    /// does; the fifth is dropped rather than run out of order.
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) fn push(&mut self, timer: rusty_rtos_core::handle::TimerHandle, callback: u16) {
+        if let Some(slot) = self.queue.get_mut(usize::from(self.len)) {
+            *slot = (timer, callback);
+            self.len = self.len.saturating_add(1);
+        }
+    }
+
+    /// The callback to run a step of, starting the next one if none is
+    /// running. `None` when there is nothing to do.
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) fn next(&mut self) -> Option<(rusty_rtos_core::handle::TimerHandle, u16, u8)> {
+        if self.current.is_none() && self.len > 0 {
+            let [first, ..] = self.queue;
+            self.current = Some(first);
+            self.queue.copy_within(1.., 0);
+            self.len = self.len.saturating_sub(1);
+            self.pc = 0;
+        }
+        self.current.map(|(t, c)| (t, c, self.pc))
+    }
+
+    /// The step just run was the callback's last, or not.
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) fn stepped(&mut self, done: bool) {
+        if done {
+            self.current = None;
+        } else {
+            self.pc = self.pc.saturating_add(1);
+        }
+    }
+}
+
+impl TickIsr {
+    /// One step of a deferred timer callback, if one is due (two cores).
+    /// `true` when it ran one.
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) fn callback_step<W: fmt::Write>(kernel: &mut SimKernel<W>) -> bool {
+        match kernel.tick_hook() {
+            Self::TaskNotify(_) => tasknotify::callback_step(kernel),
+            _ => false,
+        }
+    }
+}
+
 impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
     fn timer(
         kernel: &mut SimKernel<W>,
@@ -170,8 +240,14 @@ impl<W: fmt::Write> TickHook<SimKernel<W>> for TickIsr {
         if matches!(kernel.tick_hook(), Self::TimerDemo(_)) {
             timerdemo::timer_callback(kernel, timer, callback);
         }
-        if matches!(kernel.tick_hook(), Self::TaskNotify(_)) {
-            tasknotify::timer_callback(kernel, callback);
+        if let Self::TaskNotify(isr) = kernel.tick_hook_mut() {
+            #[cfg(feature = "smp")]
+            isr.defer(timer, callback);
+            #[cfg(not(feature = "smp"))]
+            {
+                let _ = isr;
+                tasknotify::timer_callback(kernel, callback);
+            }
         }
     }
 
@@ -676,11 +752,31 @@ pub struct Timer {
     now: u64,
     /// What the blocking arm's `xTaskResumeAll` answered.
     resumed_yielded: bool,
+    /// Two cores: a command received and not yet carried out -- the C
+    /// daemon's local `xMessage`.
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    command: Option<rusty_rtos_kernel::timer::Message>,
 }
 
 impl Timer {
+    /// Whether the NEXT step is `taskYIELD_WITHIN_API()`, the kernel's own
+    /// yield: on two cores it does not end a turn, though it takes a
+    /// critical section (the contract, rule 2). The C daemon yields, and in
+    /// the same turn goes on to receive its command; a turn ended here put
+    /// that receive a turn late (`ApiSweep`, tick 158).
+    #[cfg_attr(not(feature = "smp"), allow(dead_code))]
+    pub(crate) const fn at_yield_within_api(&self) -> bool {
+        self.pc == 9
+    }
+
     #[inline(never)]
     fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+        // Two cores: the callbacks the last step fired run first, a kernel
+        // call a step ([`Deferred`]).
+        #[cfg(feature = "smp")]
+        if TickIsr::callback_step(k) {
+            return Step::Continue;
+        }
         match self.pc {
             // xNextExpireTime = prvGetNextExpireTime( &xListWasEmpty );
             0 => {
@@ -752,10 +848,28 @@ impl Timer {
             // empty, and one command per step is that loop unrolled — a
             // callback in the middle of it can block, and the daemon has to
             // be able to come back.
+            #[cfg(not(feature = "smp"))]
             _ => match k.process_one_timer_command(0) {
                 Ok(rusty_rtos_kernel::queue::Wait::Ready(true)) => {}
                 _ => self.pc = 0,
             },
+            // Two cores: the receive and what the command does are two
+            // steps. The receive is a call that leaves a critical section, so
+            // the C's turn ends there, and the command runs in the next --
+            // a delete's `vPortFree` ends that one in turn.
+            #[cfg(feature = "smp")]
+            _ => {
+                if let Some(message) = self.command.take() {
+                    let _ = k.timer_execute_command(message);
+                } else {
+                    match k.timer_receive_command(0) {
+                        Ok(rusty_rtos_kernel::queue::Wait::Ready(Some(message))) => {
+                            self.command = Some(message);
+                        }
+                        _ => self.pc = 0,
+                    }
+                }
+            }
         }
         Step::Continue
     }

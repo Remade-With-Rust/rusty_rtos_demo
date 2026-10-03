@@ -1,4 +1,4 @@
-//! The two-core corpus: nine standard demo scenarios, on a two-core Kairos,
+//! The two-core corpus: twenty-three standard demo scenarios, on a two-core Kairos,
 //! against FreeRTOS V11.3.1 built with `configNUMBER_OF_CORES 2` -- trace for
 //! trace.
 //!
@@ -19,10 +19,18 @@
 //! contract exits decide only WHETHER a call ends a turn, which the trace
 //! already proves line by line, and the two kernels' assert probes differ.
 //!
-//! Three verdicts are failures on BOTH sides, and that is correct: `blocktim`
-//! and `QPeek` measure timing that a second core changes, and `recmutex` and
-//! `GenQTest` assert single-core priority exclusion in their own code. What
-//! is pinned is that Kairos fails them identically, at the same line.
+//! Eight verdicts are failures on BOTH sides, and that is correct: `blocktim`,
+//! `QPeek`, `AbortDelay`, `ApiSweep` and `IntQueue` measure timing or
+//! ordering that a second core changes, and `recmutex`, `GenQTest`,
+//! `TimerDemo` and `EventGroupsDemo` assert single-core assumptions in their
+//! own code. What is pinned is that Kairos fails them identically, at the
+//! same line.
+//!
+//! `death` is the one scenario of the twenty-four not here: on two cores its
+//! own code is undefined. `vCreateTasks` hands `SUICID1` a pointer to the
+//! handle it writes only when it creates `SUICID2`; one core cannot run
+//! `SUICID1` in between, two can, and it deletes the previous cycle's freed
+//! TCB (the C segfaults). There is no "fails identically" for that.
 #![cfg(feature = "smp")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -41,7 +49,7 @@ enum Outcome {
 }
 
 /// `(scenario, lines, bytes, digest, verdict)`, from the C oracle's traces.
-const PINS: [(&str, u64, usize, u64, Outcome); 9] = [
+const PINS: [(&str, u64, usize, u64, Outcome); 23] = [
     (
         "semtest",
         144008,
@@ -126,10 +134,144 @@ const PINS: [(&str, u64, usize, u64, Outcome); 9] = [
         0xc23b_62cb_1988_e69e,
         Outcome::Assert("GenQTest.c", 564),
     ),
+    (
+        "AbortDelay",
+        103101,
+        3041909,
+        0x5c22_25fb_7fae_7c76,
+        Outcome::Fail {
+            ticks: 20002,
+            yields: 747,
+        },
+    ),
+    (
+        "ApiSweep",
+        102104,
+        3031038,
+        0xff27_da44_ea37_e7f8,
+        Outcome::Fail {
+            ticks: 20003,
+            yields: 2808,
+        },
+    ),
+    (
+        "EventGroupsDemo",
+        1910,
+        51822,
+        0xb25c_5de6_094a_8615,
+        Outcome::Assert("EventGroupsDemo.c", 260),
+    ),
+    (
+        "IntQueue",
+        269922,
+        7859155,
+        0x0291_ff45_7612_4942,
+        Outcome::Fail {
+            ticks: 20065,
+            yields: 17965,
+        },
+    ),
+    (
+        "IntSemTest",
+        105505,
+        3106388,
+        0xd7f5_1f15_64d8_6f42,
+        Outcome::Pass {
+            ticks: 20002,
+            yields: 1793,
+        },
+    ),
+    (
+        "MessageBufferAMP",
+        103422,
+        3048548,
+        0x64c2_b155_8782_3f36,
+        Outcome::Pass {
+            ticks: 20002,
+            yields: 901,
+        },
+    ),
+    (
+        "MessageBufferDemo",
+        134044,
+        4347844,
+        0x6506_439b_7681_3dc3,
+        Outcome::Pass {
+            ticks: 20011,
+            yields: 12654,
+        },
+    ),
+    (
+        "QueueOverwrite",
+        94709,
+        2669597,
+        0xc1ac_cd77_3363_df91,
+        Outcome::Pass {
+            ticks: 20002,
+            yields: 203,
+        },
+    ),
+    (
+        "QueueSet",
+        111923,
+        3222034,
+        0x9a2d_daea_ed22_82e3,
+        Outcome::Pass {
+            ticks: 20003,
+            yields: 6059,
+        },
+    ),
+    (
+        "QueueSetPolling",
+        137179,
+        4069821,
+        0xd529_ec9b_54aa_8da9,
+        Outcome::Pass {
+            ticks: 20002,
+            yields: 13453,
+        },
+    ),
+    (
+        "StreamBufferDemo",
+        118590,
+        3894233,
+        0x9100_da4d_fd57_de30,
+        Outcome::Pass {
+            ticks: 20005,
+            yields: 8943,
+        },
+    ),
+    (
+        "StreamBufferInterrupt",
+        100569,
+        2957818,
+        0xbee7_4aa2_f0b9_ad2b,
+        Outcome::Pass {
+            ticks: 20003,
+            yields: 269,
+        },
+    ),
+    (
+        "TaskNotify",
+        107488,
+        3206594,
+        0xffb7_3ebd_b4f6_1e54,
+        Outcome::Pass {
+            ticks: 20002,
+            yields: 3237,
+        },
+    ),
+    (
+        "TimerDemo",
+        8327,
+        243858,
+        0x390d_ec54_424c_8527,
+        Outcome::Assert("TimerDemo.c", 427),
+    ),
 ];
 
 #[test]
-fn nine_scenarios_trace_identically_to_the_c_kernel_on_two_cores() {
+fn twenty_three_scenarios_trace_identically_to_the_c_kernel_on_two_cores() {
     let table = pins::<Digest>();
     for (name, lines, bytes, digest, want) in &PINS {
         let pin = table

@@ -195,6 +195,12 @@ fn notify_and_yield<W: fmt::Write>(k: &mut SimKernel<W>, updated: StreamBufferHa
     // port is `portEND_SWITCHING_ISR` and therefore a plain `vPortYield()`
     // — an immediate switch, because this stands in for an interrupt
     // returning.
+    // Two cores: the harness's `portYIELD_FROM_ISR` is `vPortYieldFromISR`,
+    // which only marks the switch pending -- core A keeps running, and the
+    // core the reader was readied for may take it first.
+    #[cfg(feature = "smp")]
+    rusty_rtos_core::port::Port::yield_from_isr(k.port(), woken);
+    #[cfg(not(feature = "smp"))]
     if woken.needed() {
         k.task_yield();
     }

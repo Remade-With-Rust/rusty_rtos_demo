@@ -73,6 +73,11 @@ pub struct SmpPort {
     in_isr: Cell<bool>,
     /// A yield each core asked of ITSELF, by bit.
     own: Cell<u8>,
+    /// A switch an INTERRUPT asked of a core (`portYIELD_FROM_ISR`), by
+    /// bit. The C port's `vPortYieldFromISR` only marks it pending; it is
+    /// taken where interrupts are next enabled with nothing in the way,
+    /// which for a handler run from a task's call is that core's next turn.
+    isr: Cell<u8>,
 }
 
 impl SmpPort {
@@ -87,7 +92,13 @@ impl SmpPort {
             started: Cell::new(false),
             in_isr: Cell::new(false),
             own: Cell::new(0),
+            isr: Cell::new(0),
         }
+    }
+
+    /// The switches interrupts asked for since the last call, by core bit.
+    fn take_isr(&self) -> u8 {
+        self.isr.replace(0)
     }
 
     /// `ulKairosExits`.
@@ -133,23 +144,33 @@ impl SmpPort {
 impl Port for SmpPort {
     const COMMITS_SWITCH: bool = true;
 
-    fn yield_now(&self) {
+    /// `ulKairosYields++`: every task-level yield the kernel makes.
+    ///
+    /// Except one the C would not be making: the C harness switches AT a
+    /// task-level yield when the scheduler is running, and the switch clears
+    /// `xYieldPendings`; this port takes it at the end of the turn. A core
+    /// that already has a switch outstanding is one the C has already
+    /// switched, so it would not be yielding again -- every outermost exit on
+    /// two cores yields while a yield is pending (`vTaskExitCritical`), and
+    /// counting those would count yields the C never makes. A yield the C's
+    /// switch DECLINES (the scheduler suspended) the kernel makes without
+    /// [`Port::yield_now`], so it leaves no switch outstanding and the next
+    /// one counts too, as in the C.
+    fn count_yield(&self) {
         let bit = 1 << self.core.get();
-        // The C harness switches AT a task-level yield, and the switch clears
-        // `xYieldPendings`; this port takes it at the end of the turn. A core
-        // that already has a switch outstanding is one the C has already
-        // switched, so it would not be yielding again: every outermost exit
-        // on two cores yields while a yield is pending (`vTaskExitCritical`),
-        // and counting those here would count yields the C never makes.
         if !self.in_isr.get() && self.own.get() & bit == 0 {
             self.yields.set(self.yields.get().wrapping_add(1));
         }
-        self.own.set(self.own.get() | bit);
+    }
+
+    /// The switch request itself, taken by the runner at the end of the turn.
+    fn yield_now(&self) {
+        self.own.set(self.own.get() | (1 << self.core.get()));
     }
 
     fn yield_from_isr(&self, woken: Woken) {
         if woken == Woken::YES {
-            self.own.set(self.own.get() | (1 << self.core.get()));
+            self.isr.set(self.isr.get() | (1 << self.core.get()));
         }
     }
 
@@ -165,6 +186,21 @@ impl Port for SmpPort {
         if left == 0 && self.started.get() && !self.in_isr.get() {
             self.exits.set(self.exits.get().wrapping_add(1));
         }
+    }
+
+    /// On two cores `portENTER_CRITICAL_FROM_ISR` is
+    /// `vTaskEnterCriticalFromISR`, which keeps the SAME per-core nesting as
+    /// the task-level section (the one-core Posix port's is empty, which is
+    /// the trait's default). So a `FromISR` call made from a TASK leaves a
+    /// critical section like any call, and ends the turn: `QueueSet`'s
+    /// `xQueueOverwriteFromISR` from its receiving task.
+    fn enter_critical_from_isr(&self) -> u32 {
+        self.enter_critical();
+        0
+    }
+
+    fn exit_critical_from_isr(&self, _mask: u32) {
+        self.exit_critical();
     }
 
     fn set_interrupt_mask_from_isr(&self) -> u32 {
@@ -266,13 +302,15 @@ impl<W: fmt::Write> Runner<'_, W> {
                 let n0 = k.name_of(k.current_on(0)).ok();
                 let n1 = k.name_of(k.current_on(1)).ok();
                 let lock = holder.map_or(-1, i32::from);
+                let yields = k.port().yields();
                 let _ = writeln!(
                     k.trace_mut().writer_mut(),
-                    "# turn {turn} core {c} cur0={} cur1={} pend={}{} lock={lock}",
+                    "# turn {turn} core {c} cur0={} cur1={} pend={}{} lock={lock} y={}",
                     n0.as_ref().map_or("?", |n| n.as_str()),
                     n1.as_ref().map_or("?", |n| n.as_str()),
                     pending & 1,
-                    (pending >> 1) & 1
+                    (pending >> 1) & 1,
+                    yields
                 );
             }
             if !skipped {
@@ -291,6 +329,11 @@ impl<W: fmt::Write> Runner<'_, W> {
                     left = next;
                     let mut k = self.kernel.borrow_mut();
                     k.port().set_core(c);
+                    // A line the task owes -- one the C prints on the far side
+                    // of a switch inside its last call (`traceTIMER_COMMAND_SEND`
+                    // after a send that readied the daemon) -- comes first, and
+                    // in the same turn as the task's next call, as in the C.
+                    while k.resume_pending() {}
                     let task = k.current();
                     let index = task.index() as usize;
                     let before = k.port().exits();
@@ -299,6 +342,9 @@ impl<W: fmt::Write> Runner<'_, W> {
                         break 'run;
                     };
                     let idle_pass = matches!(body, Body::IdleSmp(i) if i.at_hook());
+                    // The daemon's `taskYIELD_WITHIN_API()` leaves a critical
+                    // section and is still not a call for the turn rule.
+                    let internal_yield = matches!(body, Body::Timer(t) if t.at_yield_within_api());
                     let step = match body.step(&mut k, &mut s) {
                         Stepped::Ran(step) => step,
                         Stepped::Spawned(step) => {
@@ -318,12 +364,14 @@ impl<W: fmt::Write> Runner<'_, W> {
                         break 'run;
                     }
                     pending |= k.take_core_yields();
+                    // An interrupt's yield waits for the core's next turn.
+                    pending |= k.port().take_isr();
                     holder = if k.scheduler_suspended() != 0 {
                         Some(c)
                     } else {
                         None
                     };
-                    let made = k.port().exits() > before;
+                    let made = k.port().exits() > before && !internal_yield;
                     let mut ended = made || idle_pass;
                     if k.port().take_own(c) {
                         k.switch_context();
@@ -350,6 +398,7 @@ impl<W: fmt::Write> Runner<'_, W> {
                 if k.port().take_own(0) {
                     pending |= 1;
                 }
+                pending |= k.port().take_isr();
                 k.port().set_isr(false);
             }
         }

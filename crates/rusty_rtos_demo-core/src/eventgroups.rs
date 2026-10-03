@@ -194,17 +194,36 @@ pub struct Master {
     pc: u8,
     /// `xError`, which the C declares outside the loop and never resets.
     error: bool,
+    /// The `configASSERT` line tripped, raised as the task next steps.
+    assert_due: u32,
     /// `uxBit`, the selective test's loop variable.
     bit: u32,
     /// `uxBits`, the value the last call answered with.
     bits: u32,
 }
 
+/// A `configASSERT` the task tripped at its last step, raised now: the
+/// harness ends the run there, `fail assert EventGroupsDemo.c:<line>`.
+fn asserted(shared: &mut Shared, line: u32) -> Option<Step> {
+    if line == 0 {
+        return None;
+    }
+    shared.assert = Some(("EventGroupsDemo.c", line));
+    Some(Step::Finish(false))
+}
+
 impl Master {
     #[allow(clippy::too_many_lines)]
     #[inline(never)]
-    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
-        let s = state!(s);
+    pub(crate) fn step<W: fmt::Write>(
+        &mut self,
+        k: &mut SimKernel<W>,
+        shared: &mut Shared,
+    ) -> Step {
+        if let Some(step) = asserted(shared, self.assert_due) {
+            return step;
+        }
+        let s = state!(shared);
         match self.pc {
             // xEventGroup = xEventGroupCreate();
             0 => {
@@ -584,8 +603,13 @@ impl Master {
                 self.expect(k, s.sync2, TaskState::Suspended);
                 self.pc = 79;
             }
+            // ... and `configASSERT( xError == pdFALSE )` (EventGroupsDemo.c
+            // line 260), which ends a harness run. It fires as the task next
+            // steps: no kernel call comes between, so the trace is the C's.
             _ => {
-                if !self.error {
+                if self.error {
+                    self.assert_due = 260;
+                } else {
                     s.master_cycles = s.master_cycles.wrapping_add(1);
                 }
                 self.pc = 13;
@@ -645,6 +669,8 @@ pub struct Slave {
     pc: u8,
     /// `xError`, declared outside the loop.
     error: bool,
+    /// The `configASSERT` line tripped, raised as the task next steps.
+    assert_due: u32,
     /// `uxReturned`.
     bits: u32,
     /// Whether the call this `pc` stands for is still waiting.
@@ -653,8 +679,15 @@ pub struct Slave {
 
 impl Slave {
     #[inline(never)]
-    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
-        let s = state!(s);
+    pub(crate) fn step<W: fmt::Write>(
+        &mut self,
+        k: &mut SimKernel<W>,
+        shared: &mut Shared,
+    ) -> Step {
+        if let Some(step) = asserted(shared, self.assert_due) {
+            return step;
+        }
+        let s = state!(shared);
         let max = SimKernel::<W>::MAX_DELAY;
         match self.pc {
             0 => {
@@ -753,8 +786,11 @@ impl Slave {
                     self.pc = 14;
                 }
             }
+            // ... and `configASSERT( xError == pdFALSE )` (line 497).
             _ => {
-                if !self.error {
+                if self.error {
+                    self.assert_due = 497;
+                } else {
                     s.slave_cycles = s.slave_cycles.wrapping_add(1);
                 }
                 self.pc = 0;

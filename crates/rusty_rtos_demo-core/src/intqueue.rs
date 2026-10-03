@@ -550,23 +550,30 @@ impl LowerEmpty {
             // "something arrived" and the else is "it timed out".
             0 => match k.queue_receive(empty, ONE_TICK_DELAY) {
                 Ok(Wait::Ready(value)) => {
-                    // "A value should only be obtained when the high
-                    // priority task is suspended."
-                    let first = s.high_empty.first().copied().unwrap_or(TaskHandle::NULL);
-                    if k.task_state_get(first).unwrap_or(TaskState::Deleted) != TaskState::Suspended
-                    {
-                        with_isr(k, |i| i.log_error(line!()));
-                    }
-                    with_isr(k, |i| i.record_empty(value, LOW_PRIORITY_TASK));
                     self.value = value;
-                    self.pc = 1;
+                    self.pc = 10;
                 }
                 Ok(Wait::Blocked) => {}
                 // Timed out: raise our priority and send instead.
                 Err(_) => self.pc = 2,
             },
+            // "A value should only be obtained when the high priority task
+            // is suspended": `eTaskGetState` is a call of its own, so its own
+            // step -- on two cores the receive above and this each end a
+            // turn. Free on one core.
+            10 => {
+                let first = s.high_empty.first().copied().unwrap_or(TaskHandle::NULL);
+                if k.task_state_get(first).unwrap_or(TaskState::Deleted) != TaskState::Suspended {
+                    with_isr(k, |i| i.log_error(line!()));
+                }
+                self.pc = 1;
+            }
+            // prvRecordValue_NormallyEmpty( uxRxed, .. ), which takes no
+            // section and so shares the turn of the call after it;
             // vTaskResume( xHighPriorityNormallyEmptyTask1 );
             1 => {
+                let value = self.value;
+                with_isr(k, |i| i.record_empty(value, LOW_PRIORITY_TASK));
                 if let Some(first) = s.high_empty.first().copied() {
                     let _ = k.resume(first);
                 }
@@ -837,19 +844,19 @@ impl LowerFull {
             //
             // As the empty side's receive: the TAKEN branch is "it went in".
             0 => match k.queue_send(full, LOW_PRIORITY_TX_VALUE, ONE_TICK_DELAY) {
-                Ok(Wait::Ready(())) => {
-                    // "Should only succeed when the higher priority task is
-                    // suspended."
-                    let first = s.high_full.first().copied().unwrap_or(TaskHandle::NULL);
-                    if k.task_state_get(first).unwrap_or(TaskState::Deleted) != TaskState::Suspended
-                    {
-                        with_isr(k, |i| i.log_error(line!()));
-                    }
-                    self.pc = 1;
-                }
+                Ok(Wait::Ready(())) => self.pc = 10,
                 Ok(Wait::Blocked) => {}
                 Err(_) => self.pc = 2,
             },
+            // "Should only succeed when the higher priority task is
+            // suspended": its own step, as in `LowerEmpty`.
+            10 => {
+                let first = s.high_full.first().copied().unwrap_or(TaskHandle::NULL);
+                if k.task_state_get(first).unwrap_or(TaskState::Deleted) != TaskState::Suspended {
+                    with_isr(k, |i| i.log_error(line!()));
+                }
+                self.pc = 1;
+            }
             // vTaskResume( xHighPriorityNormallyFullTask1 );
             1 => {
                 if let Some(first) = s.high_full.first().copied() {

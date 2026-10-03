@@ -138,6 +138,11 @@ pub struct Isr {
     pub isr_auto: TimerHandle,
     /// `xISROneShotTimer`.
     pub isr_one_shot: TimerHandle,
+    /// The `configASSERT( xTestStatus )` the first failed check reached, by
+    /// its `TimerDemo.c` line, waiting for the test task's next step to end
+    /// the run there. It lives here, not in [`State`], because a callback
+    /// and the tick hook fail checks too. Zero when none is due.
+    pub assert_due: u32,
 }
 
 impl Default for Isr {
@@ -156,6 +161,7 @@ impl Default for Isr {
             one_shot: TimerHandle::NULL,
             isr_auto: TimerHandle::NULL,
             isr_one_shot: TimerHandle::NULL,
+            assert_due: 0,
         }
     }
 }
@@ -177,59 +183,105 @@ enum IsrAction {
     Restart,
 }
 
-/// One row of [`CHECKPOINTS`]: the `uxTick` the arm fires on, what the two
-/// ISR counters must be there — `None` where the C checks neither — and
-/// what else the arm does.
-type Checkpoint = (u64, Option<(u8, u8)>, IsrAction);
+/// One row of [`CHECKPOINTS`]: the `uxTick` the arm fires on; what the two
+/// ISR counters must be there, with the `TimerDemo.c` line of the
+/// `configASSERT( xTestStatus )` each one's failure reaches — `None` where
+/// the C checks neither — and what else the arm does.
+type Checkpoint = (u64, Option<((u8, u8), [u32; 2])>, IsrAction);
 
 /// The C's `else if` chain, one row per arm.
 ///
 /// It is a table rather than a chain because every arm's failure branch is
-/// the same one line, and the ticks are all distinct, so the chain was only
-/// ever a lookup.
+/// the same — fail, and assert at the line of whichever counter is off
+/// first — and the ticks are all distinct, so the chain was only ever a
+/// lookup. The first three arms test both counters in one `if`, so their
+/// two lines are the same line.
 const CHECKPOINTS: [Checkpoint; 15] = [
-    (BASE_PERIOD - MARGIN, Some((0, 0)), IsrAction::Check),
-    (BASE_PERIOD + MARGIN, Some((1, 1)), IsrAction::Check),
-    (2 * BASE_PERIOD - MARGIN, Some((1, 1)), IsrAction::Check),
-    (2 * BASE_PERIOD + MARGIN, Some((2, 1)), IsrAction::Check),
+    (
+        BASE_PERIOD - MARGIN,
+        Some(((0, 0), [921, 921])),
+        IsrAction::Check,
+    ),
+    (
+        BASE_PERIOD + MARGIN,
+        Some(((1, 1), [931, 931])),
+        IsrAction::Check,
+    ),
+    (
+        2 * BASE_PERIOD - MARGIN,
+        Some(((1, 1), [942, 942])),
+        IsrAction::Check,
+    ),
+    (
+        2 * BASE_PERIOD + MARGIN,
+        Some(((2, 1), [953, 959])),
+        IsrAction::Check,
+    ),
     (
         2 * BASE_PERIOD + (BASE_PERIOD >> 2),
-        Some((2, 1)),
+        Some(((2, 1), [970, 976])),
         IsrAction::Check,
     ),
     (3 * BASE_PERIOD, None, IsrAction::StartOneShot),
     (
         3 * BASE_PERIOD + MARGIN,
-        Some((3, 1)),
+        Some(((3, 1), [992, 998])),
         IsrAction::StopAutoReload,
     ),
-    (4 * (BASE_PERIOD - MARGIN), Some((3, 1)), IsrAction::Check),
-    (4 * BASE_PERIOD + MARGIN, Some((3, 2)), IsrAction::Check),
-    (8 * BASE_PERIOD, Some((3, 2)), IsrAction::ResetOneShot),
+    (
+        4 * (BASE_PERIOD - MARGIN),
+        Some(((3, 1), [1013, 1019])),
+        IsrAction::Check,
+    ),
+    (
+        4 * BASE_PERIOD + MARGIN,
+        Some(((3, 2), [1030, 1036])),
+        IsrAction::Check,
+    ),
+    (
+        8 * BASE_PERIOD,
+        Some(((3, 2), [1047, 1053])),
+        IsrAction::ResetOneShot,
+    ),
     (
         9 * BASE_PERIOD - MARGIN,
-        Some((3, 2)),
+        Some(((3, 2), [1067, 1073])),
         IsrAction::ResetOneShot,
     ),
     (
         10 * BASE_PERIOD - 2 * MARGIN,
-        Some((3, 2)),
+        Some(((3, 2), [1086, 1092])),
         IsrAction::ResetOneShot,
     ),
     (
         11 * BASE_PERIOD - 3 * MARGIN,
-        Some((3, 2)),
+        Some(((3, 2), [1105, 1111])),
         IsrAction::ResetOneShot,
     ),
     (
         12 * BASE_PERIOD - 2 * MARGIN,
-        Some((3, 3)),
+        Some(((3, 3), [1126, 1132])),
         IsrAction::Check,
     ),
-    (15 * BASE_PERIOD, Some((3, 3)), IsrAction::Restart),
+    (
+        15 * BASE_PERIOD,
+        Some(((3, 3), [1143, 1149])),
+        IsrAction::Restart,
+    ),
 ];
 
 impl Isr {
+    /// `xTestStatus = pdFAIL; configASSERT( xTestStatus );` at `line`.
+    ///
+    /// The harness compiles `configASSERT` in, so the C run ends at the
+    /// first one that fires; a later failure keeps the line already due.
+    fn fail(&mut self, line: u32) {
+        self.test_status = false;
+        if self.assert_due == 0 {
+            self.assert_due = line;
+        }
+    }
+
     /// `vTimerPeriodicISRTests`, called from the tick hook.
     pub(crate) fn tick<W: fmt::Write>(mut self, k: &mut SimKernel<W>) -> Self {
         self.tick = self.tick.wrapping_add(1);
@@ -262,9 +314,13 @@ impl Isr {
         let Some(&(_, expected, action)) = CHECKPOINTS.iter().find(|row| row.0 == t) else {
             return self;
         };
-        if let Some((auto, one_shot)) = expected {
-            if self.isr_auto_counter != auto || self.isr_one_shot_counter != one_shot {
-                self.test_status = false;
+        // The auto-reload counter is checked first, so its line is the one
+        // that fires when both are off.
+        if let Some(((auto, one_shot), [auto_line, one_shot_line])) = expected {
+            if self.isr_auto_counter != auto {
+                self.fail(auto_line);
+            } else if self.isr_one_shot_counter != one_shot {
+                self.fail(one_shot_line);
             }
         }
         match action {
@@ -313,15 +369,16 @@ pub(crate) fn timer_callback<W: fmt::Write>(
                     update(k, |isr| isr.stop_needed_in_timer_zero = false);
                 }
             } else {
-                fail(k);
+                fail(k, 1180);
             }
         }
         // prvOneShotTimerCallback: the timer's own id counts its calls,
-        // and must agree with the callback's private count.
+        // and must agree with the callback's private count —
+        // `configASSERT( uxLastCallCount == uxCallCount )`.
         CB_ONE_SHOT => {
             let last = k.timer_id(timer).unwrap_or(0);
             if update(k, |isr| last != isr.one_shot_calls) {
-                fail(k);
+                fail(k, 1196);
             }
             let _ = k.timer_set_id(timer, last.wrapping_add(1));
             update(k, |isr| {
@@ -383,10 +440,21 @@ fn set_isr<W: fmt::Write>(k: &mut SimKernel<W>, value: Isr) {
     }
 }
 
-fn fail<W: fmt::Write>(k: &mut SimKernel<W>) {
+/// [`Isr::fail`], from a task or a callback.
+fn fail<W: fmt::Write>(k: &mut SimKernel<W>, line: u32) {
     if let TickIsr::TimerDemo(isr) = k.tick_hook_mut() {
-        isr.test_status = false;
+        isr.fail(line);
     }
+}
+
+/// Whether a failed check has left a `configASSERT` due. If it has, the
+/// run ends at its line, the way the C harness ends it.
+fn asserted<W: fmt::Write>(k: &mut SimKernel<W>, s: &mut Shared) -> bool {
+    let line = update(k, |isr| isr.assert_due);
+    if line != 0 {
+        s.assert = Some(("TimerDemo.c", line));
+    }
+    line != 0
 }
 
 fn bump_loop<W: fmt::Write>(k: &mut SimKernel<W>) {
@@ -412,7 +480,17 @@ pub struct Body {
 
 impl Body {
     #[inline(never)]
-    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, _s: &mut Shared) -> Step {
+    pub(crate) fn step<W: fmt::Write>(&mut self, k: &mut SimKernel<W>, s: &mut Shared) -> Step {
+        // configASSERT( xTestStatus ): a check the previous step failed
+        // fires as this task runs again — the call it checks returned and,
+        // on two cores, a turn ends there (`crate::smp`), so the C evaluates
+        // the assert when the task next runs. A check the tick hook or a
+        // callback failed ends the run here too, later than the C does: it
+        // stops inside the interrupt or the daemon, which only the runner
+        // could end a run from. On one core none of them ever fails.
+        if asserted(k, s) {
+            return Step::Finish(false);
+        }
         match self.pc {
             // xOneShotTimer = xTimerCreate( "Oneshot Timer", ... );
             0 => {
@@ -422,7 +500,7 @@ impl Body {
                         isr.one_shot = t;
                         set_isr(k, isr);
                     }
-                    Err(_) => fail(k),
+                    Err(_) => fail(k, 178),
                 }
                 self.pc = 1;
             }
@@ -440,7 +518,7 @@ impl Body {
             5 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_auto_reload(one_shot) != Ok(true) {
-                    fail(k);
+                    fail(k, 188);
                 }
                 self.pc = 2;
             }
@@ -454,7 +532,7 @@ impl Body {
             6 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_auto_reload(one_shot) != Ok(false) {
-                    fail(k);
+                    fail(k, 194);
                 }
                 self.timer = 0;
                 self.pc = 3;
@@ -465,7 +543,7 @@ impl Body {
                 if self.timer < TIMER_QUEUE_LENGTH {
                     let t = auto_timer(k, self.timer);
                     if k.timer_is_active(t) != Ok(true) {
-                        fail(k);
+                        fail(k, 381);
                     }
                     self.timer = self.timer.saturating_add(1);
                 } else {
@@ -475,7 +553,7 @@ impl Body {
             4 => {
                 let t = isr_of(k).auto_timers[TIMER_QUEUE_LENGTH];
                 if k.timer_is_active(t) != Ok(false) {
-                    fail(k);
+                    fail(k, 388);
                 }
                 self.pc = 10;
             }
@@ -508,7 +586,7 @@ impl Body {
                     let min = expected.wrapping_sub(1);
                     let count = auto_counter(k, self.timer);
                     if count < min || count > expected {
-                        fail(k);
+                        fail(k, 427);
                     }
                     self.timer = self.timer.saturating_add(1);
                 }
@@ -530,7 +608,7 @@ impl Body {
                 } else {
                     let t = auto_timer(k, self.timer);
                     if k.timer_is_active(t) != Ok(true) {
-                        fail(k);
+                        fail(k, 457);
                     }
                     self.pc = 21;
                 }
@@ -543,7 +621,7 @@ impl Body {
             22 => {
                 let t = auto_timer(k, self.timer);
                 if k.timer_is_active(t) != Ok(false) {
-                    fail(k);
+                    fail(k, 469);
                 }
                 self.timer = self.timer.saturating_add(1);
                 self.pc = 20;
@@ -554,7 +632,15 @@ impl Body {
                 k.enter_critical();
                 let mut isr = isr_of(k);
                 if isr.auto_counters[TIMER_QUEUE_LENGTH] != 0 {
-                    isr.test_status = false;
+                    // configASSERT( xTestStatus ) at 482 fires inside the
+                    // critical section, before the clear: the C run ends
+                    // there and never leaves it, so this one ends now
+                    // rather than on the task's next step.
+                    isr.fail(482);
+                    set_isr(k, isr);
+                    if asserted(k, s) {
+                        return Step::Finish(false);
+                    }
                 }
                 isr.auto_counters = [0; AUTO_RELOAD_TIMERS];
                 set_isr(k, isr);
@@ -572,7 +658,7 @@ impl Body {
                     self.pc = 30;
                 } else {
                     if auto_counter(k, self.timer) != 0 {
-                        fail(k);
+                        fail(k, 499);
                     }
                     self.timer = self.timer.saturating_add(1);
                 }
@@ -582,13 +668,13 @@ impl Body {
             30 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) != Ok(false) {
-                    fail(k);
+                    fail(k, 521);
                 }
                 self.pc = 31;
             }
             31 => {
                 if isr_of(k).one_shot_counter != 0 {
-                    fail(k);
+                    fail(k, 527);
                 }
                 self.pc = 32;
             }
@@ -600,7 +686,7 @@ impl Body {
             33 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) != Ok(true) {
-                    fail(k);
+                    fail(k, 536);
                 }
                 self.pc = 34;
             }
@@ -611,14 +697,14 @@ impl Body {
             35 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) != Ok(false) {
-                    fail(k);
+                    fail(k, 547);
                 }
                 self.pc = 36;
             }
             36 => {
                 let mut isr = isr_of(k);
                 if isr.one_shot_counter != 1 {
-                    isr.test_status = false;
+                    isr.fail(553);
                 } else {
                     isr.one_shot_counter = 0;
                 }
@@ -639,7 +725,7 @@ impl Body {
             41 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) != Ok(true) {
-                    fail(k);
+                    fail(k, 582);
                 }
                 self.pc = 42;
             }
@@ -651,7 +737,7 @@ impl Body {
             43 => {
                 let t = isr_of(k).auto_timers[TIMER_QUEUE_LENGTH - 1];
                 if k.timer_is_active(t) != Ok(true) {
-                    fail(k);
+                    fail(k, 592);
                 }
                 self.resets = 0;
                 self.pc = 44;
@@ -669,26 +755,26 @@ impl Body {
             45 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) != Ok(true) {
-                    fail(k);
+                    fail(k, 607);
                 }
                 self.pc = 46;
             }
             46 => {
                 if isr_of(k).one_shot_counter != 0 {
-                    fail(k);
+                    fail(k, 613);
                 }
                 self.pc = 47;
             }
             47 => {
                 let t = isr_of(k).auto_timers[TIMER_QUEUE_LENGTH - 1];
                 if k.timer_is_active(t) != Ok(true) {
-                    fail(k);
+                    fail(k, 619);
                 }
                 self.pc = 48;
             }
             48 => {
                 if isr_of(k).auto_counters[TIMER_QUEUE_LENGTH - 1] != 0 {
-                    fail(k);
+                    fail(k, 625);
                 }
                 self.pc = 49;
             }
@@ -711,27 +797,27 @@ impl Body {
             }
             52 => {
                 if isr_of(k).one_shot_counter != 1 {
-                    fail(k);
+                    fail(k, 648);
                 }
                 self.pc = 53;
             }
             53 => {
                 if isr_of(k).auto_counters[TIMER_QUEUE_LENGTH - 1] == 0 {
-                    fail(k);
+                    fail(k, 654);
                 }
                 self.pc = 54;
             }
             54 => {
                 let t = isr_of(k).auto_timers[TIMER_QUEUE_LENGTH - 1];
                 if k.timer_is_active(t) != Ok(true) {
-                    fail(k);
+                    fail(k, 662);
                 }
                 self.pc = 55;
             }
             55 => {
                 let one_shot = isr_of(k).one_shot;
                 if k.timer_is_active(one_shot) == Ok(true) {
-                    fail(k);
+                    fail(k, 668);
                 }
                 self.pc = 56;
             }
@@ -743,7 +829,7 @@ impl Body {
             57 => {
                 let t = isr_of(k).auto_timers[TIMER_QUEUE_LENGTH - 1];
                 if k.timer_is_active(t) != Ok(false) {
-                    fail(k);
+                    fail(k, 677);
                 }
                 self.pc = 58;
             }
@@ -766,7 +852,7 @@ impl Body {
                 } else {
                     let t = auto_timer(k, self.timer);
                     if k.timer_is_active(t) != Ok(false) {
-                        fail(k);
+                        fail(k, 817);
                     }
                     self.pc = 61;
                 }
@@ -779,7 +865,7 @@ impl Body {
             _ => {
                 let t = auto_timer(k, self.timer);
                 if k.timer_is_active(t) != Ok(true) {
-                    fail(k);
+                    fail(k, 829);
                 }
                 self.timer = self.timer.saturating_add(1);
                 self.pc = 60;
@@ -793,7 +879,9 @@ impl Body {
 ///
 /// `prvTest1_CreateTimersWithoutSchedulerRunning` runs here, before the
 /// scheduler: it fills the timer command queue with starts that nothing is
-/// draining, and requires the one after that to fail.
+/// draining, and requires the one after that to fail. A `configASSERT` it
+/// reaches ends the C run before the scheduler starts; here it is left due,
+/// and the test task's first step ends the run at its line.
 ///
 /// # Errors
 /// As the kernel's create calls.
@@ -816,10 +904,10 @@ pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Resul
                         k.timer_start(t, SimKernel::<W>::MAX_DELAY),
                         Ok(Wait::Ready(true))
                     ) {
-                        isr.test_status = false;
+                        isr.fail(313);
                     }
                 }
-                Err(_) => isr.test_status = false,
+                Err(_) => isr.fail(300),
             }
         }
         // The one past the end. The C passes the *loop variable* as its id,
@@ -842,10 +930,10 @@ pub fn start<W: fmt::Write>(runner: &mut Runner<'_, W>, max_ticks: u64) -> Resul
                     k.timer_start(t, SimKernel::<W>::MAX_DELAY),
                     Ok(Wait::Ready(true))
                 ) {
-                    isr.test_status = false;
+                    isr.fail(339);
                 }
             }
-            Err(_) => isr.test_status = false,
+            Err(_) => isr.fail(330),
         }
         // The two the tick interrupt owns. A period of zero is invalid, so
         // they get a placeholder until the interrupt sets a real one.
