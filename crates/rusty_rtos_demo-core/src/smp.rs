@@ -134,10 +134,17 @@ impl Port for SmpPort {
     const COMMITS_SWITCH: bool = true;
 
     fn yield_now(&self) {
-        if !self.in_isr.get() {
+        let bit = 1 << self.core.get();
+        // The C harness switches AT a task-level yield, and the switch clears
+        // `xYieldPendings`; this port takes it at the end of the turn. A core
+        // that already has a switch outstanding is one the C has already
+        // switched, so it would not be yielding again: every outermost exit
+        // on two cores yields while a yield is pending (`vTaskExitCritical`),
+        // and counting those here would count yields the C never makes.
+        if !self.in_isr.get() && self.own.get() & bit == 0 {
             self.yields.set(self.yields.get().wrapping_add(1));
         }
-        self.own.set(self.own.get() | (1 << self.core.get()));
+        self.own.set(self.own.get() | bit);
     }
 
     fn yield_from_isr(&self, woken: Woken) {
