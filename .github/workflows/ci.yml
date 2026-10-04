@@ -47,6 +47,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: i686-unknown-linux-gnu
+      # rust-toolchain.toml pins the toolchain this repo builds with, and the
+      # action's `targets` went to a different one: "can't find crate for
+      # std". Add the target to the pinned toolchain, from the repo directory.
+      - run: rustup target add i686-unknown-linux-gnu
       - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - run: cargo test --release --target i686-unknown-linux-gnu -p rusty_rtos_demo-core --test conformance
       - run: cargo test --release --target i686-unknown-linux-gnu -p rusty_rtos_demo-core --features smp --test smp_conformance
