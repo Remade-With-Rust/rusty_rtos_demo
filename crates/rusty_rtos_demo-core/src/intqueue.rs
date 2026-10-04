@@ -85,6 +85,45 @@ const SECOND_INTERRUPT: u8 = 5;
 /// recorded.
 const LOW_PRIORITY_TX_VALUE: u64 = 9999;
 
+/// `ucNormallyEmptyReceivedValues` / `ucNormallyFullReceivedValues`, at four
+/// bits a value.
+///
+/// The C's arrays are `uint8_t[ 200 ]`, but every value stored is one of the
+/// source tags above (1 to 5) or 0 for "not received", so a nibble holds each
+/// exactly. The size matters beyond this scenario: these two arrays were the
+/// largest arm of the runner's `TickIsr`, an enum the kernel copies out and
+/// back on every tick of every scenario that has an interrupt half -- 448
+/// bytes each way, sized by IntQueue whichever scenario was running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Log([u8; NUM_VALUES_TO_LOG / 2]);
+
+impl Log {
+    const EMPTY: Self = Self([0; NUM_VALUES_TO_LOG / 2]);
+
+    /// The value logged at `index`; 0 (not received) past the end, as the
+    /// array's `get(..).unwrap_or(0)` answered.
+    fn get(&self, index: usize) -> u8 {
+        let byte = self.0.get(index / 2).copied().unwrap_or(0);
+        if index % 2 == 0 {
+            byte & 0x0f
+        } else {
+            byte >> 4
+        }
+    }
+
+    /// Log `value` (a tag, below 16) at `index`; past the end, nothing.
+    fn set(&mut self, index: usize, value: u8) {
+        debug_assert!(value < 16, "a source tag fits a nibble");
+        if let Some(byte) = self.0.get_mut(index / 2) {
+            *byte = if index % 2 == 0 {
+                (*byte & 0xf0) | (value & 0x0f)
+            } else {
+                (*byte & 0x0f) | (value << 4)
+            };
+        }
+    }
+}
+
 /// The interrupt half, and every static both halves touch.
 ///
 /// See the module docs for why the shared state lives here rather than in
@@ -104,9 +143,9 @@ pub struct Isr {
     /// `uxValueForNormallyFullQueue`.
     value_for_full: u64,
     /// `ucNormallyEmptyReceivedValues`.
-    empty_received: [u8; NUM_VALUES_TO_LOG],
+    empty_received: Log,
     /// `ucNormallyFullReceivedValues`.
-    full_received: [u8; NUM_VALUES_TO_LOG],
+    full_received: Log,
     /// `xErrorStatus`, which either half can fail.
     pub error_status: bool,
     /// `xErrorLine`. Kept because the C keeps it: a failing run that names
@@ -123,8 +162,8 @@ impl Default for Isr {
             normally_full: QueueHandle::NULL,
             value_for_empty: 0,
             value_for_full: 0,
-            empty_received: [0; NUM_VALUES_TO_LOG],
-            full_received: [0; NUM_VALUES_TO_LOG],
+            empty_received: Log::EMPTY,
+            full_received: Log::EMPTY,
             error_status: true,
             error_line: 0,
         }
@@ -147,12 +186,10 @@ impl Isr {
             return;
         };
         // "We don't expect to receive the same value twice."
-        if self.empty_received.get(index).copied().unwrap_or(0) != 0 {
+        if self.empty_received.get(index) != 0 {
             self.log_error(line!());
         }
-        if let Some(slot) = self.empty_received.get_mut(index) {
-            *slot = source;
-        }
+        self.empty_received.set(index, source);
     }
 
     /// `prvRecordValue_NormallyFull`.
@@ -163,12 +200,10 @@ impl Isr {
         let Ok(index) = usize::try_from(value) else {
             return;
         };
-        if self.full_received.get(index).copied().unwrap_or(0) != 0 {
+        if self.full_received.get(index) != 0 {
             self.log_error(line!());
         }
-        if let Some(slot) = self.full_received.get_mut(index) {
-            *slot = source;
-        }
+        self.full_received.set(index, source);
     }
 
     /// `timerNORMALLY_EMPTY_TX`.
@@ -462,7 +497,7 @@ impl HigherEmpty {
                     let mut missing = false;
                     // "Start at 1 as we expect position 0 to be unused."
                     for index in 1..NUM_VALUES_TO_LOG {
-                        match i.empty_received.get(index).copied().unwrap_or(0) {
+                        match i.empty_received.get(index) {
                             0 => missing = true,
                             v if v == HIGH_PRIORITY_TASK1 => task1 = task1.saturating_add(1),
                             v if v == HIGH_PRIORITY_TASK2 => task2 = task2.saturating_add(1),
@@ -477,7 +512,7 @@ impl HigherEmpty {
                         i.log_error(line!());
                     }
                     // "Clear the array again, ready to start a new cycle."
-                    i.empty_received = [0; NUM_VALUES_TO_LOG];
+                    i.empty_received = Log::EMPTY;
                     (task1, task2)
                 });
                 let (task1, task2) = counted.unwrap_or((0, 0));
@@ -717,7 +752,7 @@ impl FirstHigherFull {
                     let mut interrupts = 0usize;
                     let mut missing = false;
                     for index in 1..NUM_VALUES_TO_LOG {
-                        match i.full_received.get(index).copied().unwrap_or(0) {
+                        match i.full_received.get(index) {
                             0 => missing = true,
                             v if v == SECOND_INTERRUPT => interrupts = interrupts.saturating_add(1),
                             _ => {}
@@ -731,7 +766,7 @@ impl FirstHigherFull {
                         // interrupts actually running?"
                         i.log_error(line!());
                     }
-                    i.full_received = [0; NUM_VALUES_TO_LOG];
+                    i.full_received = Log::EMPTY;
                 });
 
                 if let Some(cell) = s.loops.get_mut(1) {
