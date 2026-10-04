@@ -35,6 +35,22 @@ jobs:
       - run: cargo clippy -p rusty_rtos_demo-core --all-targets --features smp -- -D warnings
       - run: cargo test --release -p rusty_rtos_demo-core --features smp --test smp_conformance
 
+  # Every target is 32-bit, and the C kernel's trace depends on the width
+  # (umbrella docs/HOLES.md H13): a 32-bit build checks the corpus against
+  # the `-m32` C kernel's pins. The QEMU cells do it on RV32 and Cortex-M3;
+  # this does it on every push, with no emulator.
+  host32:
+    name: host (i686)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-unknown-linux-gnu
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: cargo test --release --target i686-unknown-linux-gnu -p rusty_rtos_demo-core --test conformance
+      - run: cargo test --release --target i686-unknown-linux-gnu -p rusty_rtos_demo-core --features smp --test smp_conformance
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

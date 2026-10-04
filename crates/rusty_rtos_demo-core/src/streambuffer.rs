@@ -47,43 +47,32 @@ use crate::runner::{self, Runner, Shared, SimKernel, Spawn, Step, TickIsr};
 /// `sbSTREAM_BUFFER_LENGTH_BYTES`.
 pub const BUFFER_BYTES: usize = 30;
 
-/// `sizeof( size_t )` **as the oracle compiled it**, which is not the same
-/// thing as `size_of::<usize>()` here.
+/// `sizeof( size_t )` **as the oracle compiled it** -- the oracle whose
+/// pins this build checks ([`crate::pins::ORACLE_SIZE_T`]).
 ///
-/// The echo client's send length wraps at `BUFFER_BYTES - sizeof(size_t)`.
-/// The C that defines the pinned trace is the `Posix_GCC` demo on x86-64,
-/// where that is 30 - 8 = 22. Spelled as the RUNNING machine's pointer
-/// width it is 22 on the host and **26 on every 32-bit target**, so the
-/// scenario sends a different string on a chip than it does on the machine
-/// that pinned it -- and the counters do not notice, because the number of
-/// sends is unchanged and only the payload length moves.
+/// The echo client's send length wraps at `BUFFER_BYTES - sizeof(size_t)`:
+/// 30 - 8 = 22 on the x86-64 `Posix_GCC` build, 30 - 4 = 26 under `-m32`.
+/// The scenario sends a different string at each width -- same ticks, same
+/// yields, same exits, same lines, a few hundred bytes of trace text apart --
+/// so the constant and the pins must come from the SAME C build.
 ///
-/// That is what it did, and it is what made `StreamBufferDemo` the one
-/// scenario failing the corpus check on both emulators (2026-09-21): same
-/// ticks, same yields, same exits, same 20,927 lines, 194 bytes of trace
-/// text apart. A constant that follows the compiler is a constant the pins
-/// cannot survive being moved, so this one does not follow it.
+/// History, because this constant has been wrong both ways. Until
+/// 2026-10-04 every pin was the 64-bit C's, and this was a bare `8`: spelled
+/// as the running machine's width it had made `StreamBufferDemo` the one
+/// scenario failing on both emulators (2026-09-21), because a 32-bit chip
+/// sent the 26-byte string and was checked against the 22. Since H13
+/// (umbrella `docs/HOLES.md`) a 32-bit build is checked against the `-m32`
+/// C kernel's pins, which sent the 26 -- so a bare `8` would now be the
+/// defect. Both are the same rule: one width, taken from the pins.
 ///
-/// It is the same reasoning as [`PosixDemoConfig::MESSAGE_LENGTH_BYTES`],
-/// and deliberately a separate constant: that one is
+/// It is deliberately a separate constant from
+/// [`PosixDemoConfig::MESSAGE_LENGTH_BYTES`]: that one is
 /// `sizeof(configMESSAGE_BUFFER_LENGTH_TYPE)`, which merely DEFAULTS to
 /// `size_t`, and a configuration is free to move one without the other.
 ///
 /// [`PosixDemoConfig::MESSAGE_LENGTH_BYTES`]: rusty_rtos_core::config::PosixDemoConfig
-const ORACLE_SIZE_T: usize = 8;
+const ORACLE_SIZE_T: usize = crate::pins::ORACLE_SIZE_T;
 
-// The guard, and it is a real one rather than a restatement.
-//
-// A host test cannot catch this: on x86-64 the wrong expression and the right
-// one are both 8, which is why the defect lived through every host gate and
-// was found only by a 32-bit cell. This assert is evaluated PER TARGET, so on
-// the thumbv7m and riscv32 builds the corpus cells make, writing
-// `size_of::<usize>()` here again stops the build with this message instead
-// of quietly producing a different trace.
-const _: () = assert!(
-    ORACLE_SIZE_T == 8,
-    "ORACLE_SIZE_T is the ORACLE's sizeof(size_t): 8, on the x86-64 Posix_GCC build the pins come from. It must not follow the TARGET's pointer width -- doing so sends a different string on a 32-bit chip and breaks conformance there while every host gate still passes."
-);
 /// `sbSTREAM_BUFFER_LENGTH_ONE`.
 pub const BUFFER_LENGTH_ONE: usize = 1;
 /// `sbTRIGGER_LEVEL_1`.

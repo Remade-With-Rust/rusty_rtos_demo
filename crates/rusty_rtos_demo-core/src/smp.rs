@@ -24,10 +24,9 @@ use core::cell::Cell;
 use core::fmt;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use rusty_rtos_core::config::Config;
+use rusty_rtos_core::config::{Config, PosixDemoConfig};
 use rusty_rtos_core::isr::Woken;
 use rusty_rtos_core::port::Port;
-use rusty_rtos_core::tick::Bits64;
 
 use crate::runner::{Body, Runner, SimKernel, Step, Stepped, Verdict};
 
@@ -37,7 +36,7 @@ use crate::runner::{Body, Runner, SimKernel, Step, Stepped, Verdict};
 pub struct PosixDemoSmpConfig;
 
 impl Config for PosixDemoSmpConfig {
-    type Tick = Bits64;
+    type Tick = <PosixDemoConfig as Config>::Tick;
     const TICK_RATE_HZ: u32 = 1000;
     const DYNAMIC_ALLOCATION: bool = true;
     const PORT_STACK_INIT_CRITICAL: bool = true;
@@ -51,7 +50,7 @@ impl Config for PosixDemoSmpConfig {
     const CHECK_FOR_STACK_OVERFLOW: u8 = 0;
     const USE_TICK_HOOK: bool = true;
     const NOTIFICATION_ARRAY_ENTRIES: usize = 3;
-    const MESSAGE_LENGTH_BYTES: usize = 8;
+    const MESSAGE_LENGTH_BYTES: usize = <PosixDemoConfig as Config>::MESSAGE_LENGTH_BYTES;
     const TOTAL_HEAP_SIZE: usize = 65 * 1024;
     const MAX_TASKS: usize = 64;
     const MAX_QUEUES: usize = 64;

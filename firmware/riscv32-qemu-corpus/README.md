@@ -9,20 +9,29 @@ kairos check rusty_rtos_demo --qemu     # or: cargo run --release
 
 ## What it proves
 
-All **17** pinned scenarios of the Kairos conformance corpus produce a
+All **25** pinned scenarios of the Kairos conformance corpus produce a
 trace **byte-identical to the C FreeRTOS kernel's**, on
 `riscv32imac-unknown-none-elf`.
 
 ```text
 === the Kairos conformance corpus on RV32 (QEMU virt) ===
-dynamic                ok    ticks=2000 yields=3589 exits=21346 lines=24402 bytes=757383
-PollQ                  ok    ticks=2001 yields=43 exits=2116 lines=2362 bytes=68195
+dynamic                ok    ticks=2000 yields=3589 exits=21346 lines=24402 bytes=757373
+PollQ                  ok    ticks=2001 yields=43 exits=2116 lines=2362 bytes=68185
 ...
-PollQ-typed            ok    ticks=2001 yields=43 exits=2116 lines=2362 bytes=68195
+death                  ok    ticks=4000 yields=55 exits=3890 lines=4369 bytes=129004
 
-RESULT: PASS -- 17 scenarios byte-identical to the C kernel
-        on RV32, at 2000 ticks each.
+RESULT: PASS -- 25 scenarios byte-identical to the C kernel
+        on RV32, at 2000 ticks or each pin's own floor.
 ```
+
+**Which C kernel.** Since 2026-10-04 the pins this cell reads are the
+**`-m32`** C kernel's (umbrella `docs/HOLES.md` H13). A target is 32-bit, so
+`PosixDemoConfig` here has a 32-bit tick and a four-byte message prefix --
+what the C has on a 32-bit machine -- and the trace is checked against the C
+built at that width. Before that date this cell ran a 64-bit tick on a
+32-bit part and compared it with the 64-bit C: consistent, but not the
+kernel a 32-bit user gets. `portMAX_DELAY` printing as 4294967295 rather than
+2^64-1 is why every `bytes` above is ten short of the host's.
 
 Each scenario is checked on six quantities — ticks, yields, **exits**,
 lines, an FNV-1a/64 digest of the entire trace, and its byte count. The

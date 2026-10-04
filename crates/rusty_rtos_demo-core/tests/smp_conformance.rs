@@ -48,6 +48,15 @@ enum Outcome {
     Assert(&'static str, u32),
 }
 
+/// A 64-bit build. The C kernel's trace depends on the machine's width (a
+/// message buffer's length prefix is `size_t`), and so does
+/// `PosixDemoSmpConfig`; where the two-core C runs differ, a row carries the
+/// 64-bit number first and the `-m32` C kernel's second (umbrella
+/// `docs/HOLES.md` H13). Three rows do: the stream and message buffers. In
+/// `MessageBufferDemo` the four-byte prefix even changes WHEN things run --
+/// more messages fit -- so its verdict moves too.
+const W64: bool = cfg!(target_pointer_width = "64");
+
 /// `(scenario, lines, bytes, digest, verdict)`, from the C oracle's traces.
 const PINS: [(&str, u64, usize, u64, Outcome); 23] = [
     (
@@ -185,7 +194,11 @@ const PINS: [(&str, u64, usize, u64, Outcome); 23] = [
         "MessageBufferAMP",
         103422,
         3048548,
-        0x64c2_b155_8782_3f36,
+        if W64 {
+            0x64c2_b155_8782_3f36
+        } else {
+            0xbd38_8864_9a3b_4d7e
+        },
         Outcome::Pass {
             ticks: 20002,
             yields: 901,
@@ -193,12 +206,16 @@ const PINS: [(&str, u64, usize, u64, Outcome); 23] = [
     ),
     (
         "MessageBufferDemo",
-        134044,
-        4347844,
-        0x6506_439b_7681_3dc3,
+        if W64 { 134044 } else { 135512 },
+        if W64 { 4347844 } else { 4392918 },
+        if W64 {
+            0x6506_439b_7681_3dc3
+        } else {
+            0x6367_bf74_2e1a_a296
+        },
         Outcome::Pass {
-            ticks: 20011,
-            yields: 12654,
+            ticks: if W64 { 20011 } else { 20002 },
+            yields: if W64 { 12654 } else { 12594 },
         },
     ),
     (
@@ -234,8 +251,12 @@ const PINS: [(&str, u64, usize, u64, Outcome); 23] = [
     (
         "StreamBufferDemo",
         118590,
-        3894233,
-        0x9100_da4d_fd57_de30,
+        if W64 { 3894233 } else { 3894575 },
+        if W64 {
+            0x9100_da4d_fd57_de30
+        } else {
+            0xc5d4_bf70_6674_de9c
+        },
         Outcome::Pass {
             ticks: 20005,
             yields: 8943,

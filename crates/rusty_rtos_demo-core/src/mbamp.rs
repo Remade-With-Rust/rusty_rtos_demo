@@ -50,14 +50,17 @@ const DONT_BLOCK: u64 = 0;
 /// `pdMS_TO_TICKS( 250 )` at the demo configuration's 1000 Hz.
 const CORE_A_DELAY: u64 = 250;
 
-/// The width of a `MessageBufferHandle_t` on the machine the oracle runs
-/// on, which is what the control buffer's messages are made of.
+/// The width of a `MessageBufferHandle_t` in the C build the pins come
+/// from, which is what the control buffer's messages are made of: a
+/// pointer, as wide as that build's `size_t` -- eight on the x86-64 oracle,
+/// four under `-m32` ([`crate::pins::ORACLE_SIZE_T`], umbrella
+/// `docs/HOLES.md` H13).
 ///
 /// It matters because the trace records how many bytes a send moved: the C
-/// puts a pointer on that buffer and the trace says eight. Ours puts a
-/// handle in the low four bytes of the same eight, so the line matches and
-/// the buffer fills at the same rate.
-const HANDLE_BYTES: usize = 8;
+/// puts a pointer on that buffer and the trace says eight, or four. Ours
+/// puts a handle in the low four bytes of the same width, so the line
+/// matches and the buffer fills at the same rate.
+const HANDLE_BYTES: usize = crate::pins::ORACLE_SIZE_T;
 
 /// `MessageBufferAMP.c`'s file-scope variables.
 #[derive(Debug, Clone, Copy, Default)]

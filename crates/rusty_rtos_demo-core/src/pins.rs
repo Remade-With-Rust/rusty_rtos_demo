@@ -33,6 +33,23 @@
 //! objects with a call that can return blind. Every other row below is the
 //! same number it was under v1, which is the evidence that the widening was
 //! as narrow as it was meant to be. See `docs/HOLES.md`, H9.
+//!
+//! # Two widths
+//!
+//! The Posix port's `TickType_t` is `unsigned long` and a message buffer's
+//! length prefix is `size_t`, so the C kernel's trace depends on the width
+//! of the machine it ran on: `portMAX_DELAY` prints as 2^64-1 on the x86_64
+//! host and as 2^32-1 under `-m32`, and a message costs eight bytes of
+//! buffer or four. `PosixDemoConfig` follows the build's width, so a pin
+//! must too: where the two C runs differ, a row carries both, 64-bit first,
+//! and [`w`] picks. Every 32-bit number is the `-m32` C kernel's own
+//! (`oracle/pin.py`, umbrella `docs/HOLES.md` H13), and only `lines`,
+//! `bytes` and `digest` ever differ -- the two widths agree on every
+//! scenario's ticks, yields and exits, which is the evidence that the width
+//! changes what the trace SAYS and not when anything runs.
+//!
+//! The 32-bit rows are what the Cortex-M3 and RV32 cells check, and what
+//! `tests/conformance.rs` checks when built for a 32-bit host.
 
 use core::fmt;
 
@@ -54,6 +71,33 @@ pub const PIN_TICKS: u64 = 2000;
 
 /// How many scenarios are pinned.
 pub const COUNT: usize = 25;
+
+/// Which C build this build's pins come from: the x86-64 one on a 64-bit
+/// build, the `-m32` one otherwise (see "Two widths" above).
+const PINS_64: bool = cfg!(target_pointer_width = "64");
+
+/// `sizeof( size_t )` in the C build the pins come from. A scenario whose C
+/// spells a length with it must use this, never `size_of::<usize>()` on its
+/// own: the two agree on every target today, but only this one is tied to
+/// the table it is checked against.
+pub const ORACLE_SIZE_T: usize = if PINS_64 { 8 } else { 4 };
+
+// The config the scenarios run must be the one the pins were taken under.
+// `rusty_rtos_core` before H13 typed `PosixDemoConfig` at 64 bits on every
+// build; against it a 32-bit build would fail every row on a digest, which
+// reads like a kernel bug. This says what it is instead.
+const _: () = assert!(
+    <rusty_rtos_core::config::PosixDemoConfig as rusty_rtos_core::config::Config>::MESSAGE_LENGTH_BYTES
+        == ORACLE_SIZE_T,
+    "PosixDemoConfig does not follow this build's width: a 32-bit build needs the rusty_rtos_core that types it at 32 bits (HOLES.md H13)"
+);
+
+/// The 64-bit C kernel's number on a 64-bit build, the `-m32` C kernel's on
+/// a 32-bit one.
+#[inline]
+fn w<T>(bits64: T, bits32: T) -> T {
+    if PINS_64 { bits64 } else { bits32 }
+}
 
 /// One scenario's pinned verdict and trace digest.
 pub struct Pin<W: fmt::Write> {
@@ -162,8 +206,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 3589,
             exits: 21346,
             lines: 24402,
-            digest: 0x6bee_a9f4_66e5_1e2d,
-            bytes: 757_383,
+            digest: w(0x6bee_a9f4_66e5_1e2d, 0x4733_4b4b_0fac_1d6b),
+            bytes: w(757_383, 757_373),
         },
         Pin {
             name: "AbortDelay",
@@ -173,8 +217,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 86,
             exits: 2198,
             lines: 2548,
-            digest: 0x54b8_aee9_7f55_5577,
-            bytes: 74_868,
+            digest: w(0x54b8_aee9_7f55_5577, 0x3965_3b98_89b0_e209),
+            bytes: w(74_868, 74_858),
         },
         Pin {
             name: "PollQ",
@@ -184,8 +228,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 43,
             exits: 2116,
             lines: 2362,
-            digest: 0xf50b_bbbd_22ec_16d1,
-            bytes: 68_195,
+            digest: w(0xf50b_bbbd_22ec_16d1, 0x7578_7588_bb26_7733),
+            bytes: w(68_195, 68_185),
         },
         Pin {
             name: "BlockQ",
@@ -195,8 +239,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 3913,
             exits: 25681,
             lines: 26948,
-            digest: 0x8832_7800_3be7_cba9,
-            bytes: 762_294,
+            digest: w(0x8832_7800_3be7_cba9, 0x961c_2d7b_0854_fb5b),
+            bytes: w(762_294, 762_284),
         },
         Pin {
             name: "semtest",
@@ -206,8 +250,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 1296,
             exits: 23281,
             lines: 30099,
-            digest: 0x20b3_c3c7_6b70_9ce8,
-            bytes: 684_801,
+            digest: w(0x20b3_c3c7_6b70_9ce8, 0xa111_63bf_e4db_d28e),
+            bytes: w(684_801, 684_791),
         },
         Pin {
             name: "countsem",
@@ -217,8 +261,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 421,
             exits: 25602,
             lines: 19344,
-            digest: 0x6718_535d_cbf6_5bef,
-            bytes: 439_451,
+            digest: w(0x6718_535d_cbf6_5bef, 0xf8da_dfa4_3fb9_2249),
+            bytes: w(439_451, 439_441),
         },
         Pin {
             name: "recmutex",
@@ -228,8 +272,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 815,
             exits: 21377,
             lines: 27738,
-            digest: 0x1699_053b_0e0a_58f5,
-            bytes: 782_883,
+            digest: w(0x1699_053b_0e0a_58f5, 0xca2e_aee2_5092_0e8b),
+            bytes: w(782_883, 782_873),
         },
         Pin {
             name: "blocktim",
@@ -239,8 +283,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 92,
             exits: 2287,
             lines: 2645,
-            digest: 0x8b4b_b185_2e12_8390,
-            bytes: 77_387,
+            digest: w(0x8b4b_b185_2e12_8390, 0x9fca_f641_c78f_1dba),
+            bytes: w(77_387, 77_377),
         },
         Pin {
             name: "QPeek",
@@ -250,8 +294,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 1786,
             exits: 8313,
             lines: 9774,
-            digest: 0x5f7e_27d4_de97_d2e8,
-            bytes: 276_939,
+            digest: w(0x5f7e_27d4_de97_d2e8, 0x5167_2ac6_7e20_9bde),
+            bytes: w(276_939, 276_929),
         },
         Pin {
             name: "GenQTest",
@@ -261,8 +305,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 3013,
             exits: 26017,
             lines: 25126,
-            digest: 0x99a0_03aa_8c2a_19b4,
-            bytes: 683_187,
+            digest: w(0x99a0_03aa_8c2a_19b4, 0xf5da_f40c_82a8_13a2),
+            bytes: w(683_187, 683_177),
         },
         Pin {
             name: "QueueOverwrite",
@@ -272,8 +316,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 21,
             exits: 32001,
             lines: 26021,
-            digest: 0x0bc1_5e6e_8a4e_12d3,
-            bytes: 532_729,
+            digest: w(0x0bc1_5e6e_8a4e_12d3, 0xc296_2498_b571_872d),
+            bytes: w(532_729, 532_719),
         },
         Pin {
             name: "QueueSetPolling",
@@ -283,8 +327,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 688,
             exits: 21345,
             lines: 27496,
-            digest: 0xf354_2654_312b_9201,
-            bytes: 782_296,
+            digest: w(0xf354_2654_312b_9201, 0xd6a0_edec_3166_b217),
+            bytes: w(782_296, 782_286),
         },
         Pin {
             name: "IntSemTest",
@@ -294,8 +338,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 107,
             exits: 2417,
             lines: 2702,
-            digest: 0x7e9f_c49f_3acc_645e,
-            bytes: 78_407,
+            digest: w(0x7e9f_c49f_3acc_645e, 0x26d0_88eb_ab8e_5a90),
+            bytes: w(78_407, 78_397),
         },
         Pin {
             name: "StreamBufferInterrupt",
@@ -305,8 +349,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 28,
             exits: 2085,
             lines: 2273,
-            digest: 0xfd91_ee4f_e21d_dd17,
-            bytes: 66_145,
+            digest: w(0xfd91_ee4f_e21d_dd17, 0xe18d_097b_4bc3_3699),
+            bytes: w(66_145, 66_135),
         },
         Pin {
             name: "StreamBufferDemo",
@@ -316,8 +360,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 2424,
             exits: 28002,
             lines: 20927,
-            digest: 0xf159_2634_a152_db89,
-            bytes: 676_662,
+            digest: w(0xf159_2634_a152_db89, 0x6ac3_5c04_333d_c136),
+            bytes: w(676_662, 676_846),
         },
         Pin {
             name: "MessageBufferDemo",
@@ -326,9 +370,9 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             ticks: 2000,
             yields: 2560,
             exits: 28097,
-            lines: 19587,
-            digest: 0x5cb3_12f2_6ca3_18f9,
-            bytes: 620_657,
+            lines: w(19_587, 22_541),
+            digest: w(0x5cb3_12f2_6ca3_18f9, 0x8a0b_f8b9_9c4f_6b55),
+            bytes: w(620_657, 708_569),
         },
         Pin {
             name: "QueueSet",
@@ -338,8 +382,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 624,
             exits: 6137,
             lines: 6280,
-            digest: 0x2f8a_570d_f721_e2bc,
-            bytes: 167_059,
+            digest: w(0x2f8a_570d_f721_e2bc, 0xc36c_b2cb_ed00_b882),
+            bytes: w(167_059, 167_049),
         },
         Pin {
             name: "IntQueue",
@@ -349,8 +393,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 6999,
             exits: 31827,
             lines: 44284,
-            digest: 0x595e_402b_5576_5d65,
-            bytes: 1_279_335,
+            digest: w(0x595e_402b_5576_5d65, 0x78b3_84fc_bc1f_d0d7),
+            bytes: w(1_279_335, 1_279_325),
         },
         Pin {
             // KAIROS-authored rather than ported; see oracle/harness/ApiSweep.c.
@@ -361,8 +405,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 354,
             exits: 3505,
             lines: 4897,
-            digest: 0x2438_48b2_612f_ff91,
-            bytes: 143_106,
+            digest: w(0x2438_48b2_612f_ff91, 0x6942_6448_9163_f45b),
+            bytes: w(143_106, 143_096),
         },
         Pin {
             name: "TaskNotify",
@@ -372,8 +416,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 227,
             exits: 2845,
             lines: 3518,
-            digest: 0x54c5_765b_0638_11ef,
-            bytes: 105_221,
+            digest: w(0x54c5_765b_0638_11ef, 0xf4e4_7f6d_899f_8ae1),
+            bytes: w(105_221, 105_211),
         },
         Pin {
             name: "TimerDemo",
@@ -394,8 +438,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 4991,
             exits: 16_577,
             lines: 24_157,
-            digest: 0x8951_8b1d_73e2_6404,
-            bytes: 707_007,
+            digest: w(0x8951_8b1d_73e2_6404, 0x855f_e2a2_3e28_b962),
+            bytes: w(707_007, 706_997),
         },
         Pin {
             name: "MessageBufferAMP",
@@ -405,8 +449,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 75,
             exits: 2090,
             lines: 2445,
-            digest: 0x0f72_591f_32d8_4bec,
-            bytes: 71_529,
+            digest: w(0x0f72_591f_32d8_4bec, 0x7721_e91a_1629_b4ee),
+            bytes: w(71_529, 71_519),
         },
         // `PollQ` again, written against the Rust face (mission plan, K2.1).
         // Every number here is `PollQ`'s own, deliberately and to the digit —
@@ -422,8 +466,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 43,
             exits: 2116,
             lines: 2362,
-            digest: 0xf50b_bbbd_22ec_16d1,
-            bytes: 68_195,
+            digest: w(0xf50b_bbbd_22ec_16d1, 0x7578_7588_bb26_7733),
+            bytes: w(68_195, 68_185),
         },
         // `death.c`: the only scenario that deletes a task, and the only one
         // that creates one with the scheduler already running. Its numbers
@@ -437,8 +481,8 @@ pub fn pins<W: fmt::Write>() -> [Pin<W>; COUNT] {
             yields: 55,
             exits: 3890,
             lines: 4369,
-            digest: 0xec10_62cf_1c36_07ea,
-            bytes: 129_014,
+            digest: w(0xec10_62cf_1c36_07ea, 0x97c5_5839_eb46_3b68),
+            bytes: w(129_014, 129_004),
         },
     ]
 }

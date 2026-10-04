@@ -9,13 +9,20 @@ part rather than an emulator**.
 a 32-bit target, so this cell was the one place it could be confirmed fixed on
 real silicon rather than under emulation.
 
+**25 of 25 again on 2026-10-04, against the `-m32` C kernel** (umbrella
+`docs/HOLES.md` H13). The pins a 32-bit build reads are now the C's at 32
+bits, and `PosixDemoConfig` on this part has the 32-bit tick and four-byte
+message prefix the C has on a 32-bit machine. Every run before that date
+checked a 64-bit tick on a 32-bit part against the 64-bit C -- consistent,
+but not the kernel a 32-bit user gets. The output below is that run.
+
 ```
 === the Kairos conformance corpus on ESP32-S3 (Xtensa, SILICON) ===
 target  xtensa-esp32s3-none-elf, no_std, NO alloc, no per-task stack
 
-dynamic                ok    ticks=2000 yields=3589 exits=21346 lines=24402 bytes=757383
+dynamic                ok    ticks=2000 yields=3589 exits=21346 lines=24402 bytes=757373
 ...
-death                  ok    ticks=4000 yields=55 exits=3890 lines=4369 bytes=129014
+death                  ok    ticks=4000 yields=55 exits=3890 lines=4369 bytes=129004
 
 RESULT: PASS -- 25 scenarios byte-identical to the C kernel
         on ESP32-S3 SILICON, at 2000 ticks or each pin's own floor.
