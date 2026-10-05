@@ -79,10 +79,9 @@ without the oracle present.
 
 With `--features smp` the same bodies run on a two-core kernel, against
 FreeRTOS V11.3.1 built with `configNUMBER_OF_CORES 2` on a deterministic
-two-core port (the umbrella's `oracle/harness-smp`): **nine scenarios
-identical at 20,000 ticks** -- `semtest`, `dynamic`, `PollQ`, `BlockQ`,
-`countsem`, `recmutex`, `blocktim`, `QPeek` and `GenQTest`, about 900,000
-lines.
+two-core port (the umbrella's `oracle/harness-smp`): **twenty-three
+scenarios identical at 20,000 ticks** -- every C scenario of the one-core
+corpus except `death`, whose own C is undefined on two cores.
 
 ```sh
 cargo test --release -p rusty_rtos_demo-core --features smp --test smp_conformance
@@ -92,11 +91,20 @@ The two sides share one rule for interleaving the cores (`src/smp.rs`): each
 core takes a TURN; a turn ends when a kernel call that left a critical
 section returns, when the core switches task, or after an idle pass; a core
 whose partner holds the scheduler suspended is skipped; ticks land on core 0
-between turns. Four scenarios fail their own checks on two cores -- they
-measure single-core timing (`blocktim`, `QPeek`) or assert single-core
-exclusion in the demo's own code (`recmutex`, `GenQTest`) -- and Kairos fails
-them identically, at the same line. Building this corpus found one kernel
-defect (the SMP arms of priority inheritance, fixed in kernel 0.3.1).
+between turns. Nine scenarios fail their own checks on two cores -- they
+measure single-core timing or assert single-core exclusion in the demo's own
+code (`recmutex`, `GenQTest`, `TimerDemo`, `EventGroupsDemo`, ...) -- and
+Kairos fails them identically, at the same line. Building this corpus found
+kernel defects fixed in 0.3.1 (the SMP arms of priority inheritance) and
+0.3.3 (three changes, among them the timer daemon's split receive and
+execute).
+
+**At 32 bits too (0.3.2).** The C kernel's trace depends on the machine's
+width (`unsigned long` ticks, `size_t` message prefixes), so the pin tables
+carry the `-m32` C kernel's numbers beside the x86-64 ones and a 32-bit
+build checks against them -- the i686 host in CI, and the RV32, Cortex-M3
+and ESP32-S3 cells. Requires `rusty_rtos_core` 0.2.5 and
+`rusty_rtos_kernel` 0.3.3.
 
 ## Using it
 
