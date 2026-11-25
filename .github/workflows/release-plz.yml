@@ -46,7 +46,7 @@ jobs:
       # major tag on this action -- and referencing it fails to resolve, which is
       # why the copy this replaced never ran successfully once.
       - name: Run release-plz
-        uses: release-plz/action@v0.5.131
+        uses: release-plz/action@v0.5.148
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
